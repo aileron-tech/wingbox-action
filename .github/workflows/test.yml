@@ -1,0 +1,73 @@
+# The action run on a small fixture repository (a base and a head commit) on
+# Linux, macOS and Windows: it installs the released wingbox from PyPI and writes its report.
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m unittest discover -s tests
+  fixture:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Fixture repository
+        id: fixture
+        shell: bash
+        run: python tests/make_fixture.py "$RUNNER_TEMP/fixture" >> "$GITHUB_OUTPUT"
+      - name: Run the action
+        id: wingbox
+        uses: ./
+        with:
+          working-directory: ${{ runner.temp }}/fixture
+          base: ${{ steps.fixture.outputs.base }}
+          head: ${{ steps.fixture.outputs.head }}
+          comment: "false"
+          fail-on: none
+          # One job only: an artifact name is taken once per workflow run.
+          upload-map: ${{ matrix.os == 'ubuntu-latest' }}
+      - name: Check the report
+        shell: bash
+        env:
+          REPORT: ${{ steps.wingbox.outputs.report }}
+          UNTOUCHED: ${{ steps.wingbox.outputs.untouched-dependents }}
+          NOT_CHECKED: ${{ steps.wingbox.outputs.not-checked-parts }}
+        run: python tests/check_fixture.py "$REPORT" "$UNTOUCHED" "$NOT_CHECKED"
+      - name: Check the map
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        env:
+          MAP: ${{ steps.wingbox.outputs.map }}
+        run: test -s "$MAP"
+      - name: Check that the fixture checkout is clean
+        shell: bash
+        working-directory: ${{ runner.temp }}/fixture
+        run: test -z "$(git status --porcelain)"

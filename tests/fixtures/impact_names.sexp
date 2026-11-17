@@ -1,0 +1,8 @@
+(impact-root src/app :lang rs :file src/app/mod.rs)
+(impact src/app src/app/mouse :lang rs :via imports :depth 1 (:use AppCommand AppData AppEvent :of 14))
+(impact src/app src/main :lang rs :via imports :depth 1 (:member "ProcessManager" new) (:reexport "crate::infra" AttachTtyError KillProcessError ProcessExit :of 10))
+(impact src/app src/ui :lang rs :via imports :depth 1 (:glob "super" Frame render_row))
+(impact src/app src/macros :lang rs :via imports :depth 1 (:macro log_line))
+(impact src/app src/bin/tool :lang rs :via imports :depth 2 :through src/main :more 2 (:use run))
+(impact-summary src/app :direct 4 :total 5 :depth 2)
+(read-first src/app/mod.rs)

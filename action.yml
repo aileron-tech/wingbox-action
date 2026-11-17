@@ -1,0 +1,96 @@
+name: Wingbox Pull Request Check
+description: Comments on a pull request with the modules that depend on the changed files but were not changed, as a list and a diagram.
+author: Aileron Technologies
+branding:
+  icon: git-pull-request
+  color: blue
+
+inputs:
+  version:
+    description: The wingbox release installed from PyPI.
+    default: "0.10.1"
+  hops:
+    description: How far dependents are followed from each changed file.
+    default: "2"
+  fail-on:
+    description: "none, violations (a layer, capability or pattern violation introduced by the pull request) or not-checked (a part that could not be checked)."
+    default: none
+  comment:
+    description: Write the report as one comment on the pull request, updated on each push.
+    default: "true"
+  upload-map:
+    description: Upload the interactive map Wingbox builds (.wingbox/map.html) as the workflow artifact wingbox-map; it is kept as long as the repository keeps artifacts.
+    default: "false"
+  paths:
+    description: "Glob patterns of the changed files to report on, one per line; !pattern leaves files out. Empty: all."
+    default: ""
+  python-version:
+    description: The Python used to run wingbox (3.11 or newer).
+    default: "3.12"
+  base:
+    description: Base commit; default the base of the pull request.
+    default: ""
+  head:
+    description: Head commit; default the head of the pull request.
+    default: ""
+  working-directory:
+    description: The repository checkout.
+    default: "."
+  github-token:
+    description: Token for the comment (needs pull-requests write).
+    default: ${{ github.token }}
+
+outputs:
+  report:
+    description: Path of the Markdown report (the job summary).
+    value: ${{ steps.check.outputs.report }}
+  map:
+    description: Path of the copy of the interactive map on the runner; empty unless upload-map is true.
+    value: ${{ steps.check.outputs.map }}
+  untouched-dependents:
+    description: Number of dependent modules the pull request does not change.
+    value: ${{ steps.check.outputs.untouched-dependents }}
+  introduced-findings:
+    description: Number of boundary findings the pull request introduces.
+    value: ${{ steps.check.outputs.introduced-findings }}
+  not-checked-parts:
+    description: Number of parts wingbox boundaries could not check.
+    value: ${{ steps.check.outputs.not-checked-parts }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      id: python
+      with:
+        python-version: ${{ inputs.python-version }}
+        update-environment: false
+    - name: Install wingbox
+      shell: bash
+      run: '"$WINGBOX_PYTHON" -m pip install --disable-pip-version-check --quiet "wingbox==$WINGBOX_VERSION"'
+      env:
+        WINGBOX_PYTHON: ${{ steps.python.outputs.python-path }}
+        WINGBOX_VERSION: ${{ inputs.version }}
+    - name: Check the pull request
+      id: check
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: '"$WINGBOX_PYTHON" "$GITHUB_ACTION_PATH/wingbox_pr.py"'
+      env:
+        WINGBOX_PYTHON: ${{ steps.python.outputs.python-path }}
+        WINGBOX_VERSION: ${{ inputs.version }}
+        WINGBOX_HOPS: ${{ inputs.hops }}
+        WINGBOX_FAIL_ON: ${{ inputs.fail-on }}
+        WINGBOX_COMMENT: ${{ inputs.comment }}
+        WINGBOX_UPLOAD_MAP: ${{ inputs.upload-map }}
+        WINGBOX_PATHS: ${{ inputs.paths }}
+        WINGBOX_BASE: ${{ inputs.base }}
+        WINGBOX_HEAD: ${{ inputs.head }}
+        WINGBOX_TOKEN: ${{ inputs.github-token }}
+    - name: Upload the map
+      if: ${{ !cancelled() && inputs.upload-map == 'true' && steps.check.outputs.map != '' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: wingbox-map
+        path: ${{ steps.check.outputs.map }}
+        if-no-files-found: warn

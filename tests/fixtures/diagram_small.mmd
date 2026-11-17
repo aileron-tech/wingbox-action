@@ -1,0 +1,21 @@
+%%{init: {"flowchart": {"nodeSpacing": 12, "rankSpacing": 60, "padding": 8}}}%%
+flowchart RL
+  subgraph pr["Changed files"]
+    c0["src/models/order.ts"]
+  end
+  subgraph g0["src/api/"]
+    m0("orders.controller")
+  end
+  subgraph g1["src/jobs/"]
+    m1("invoice.job")
+  end
+  subgraph g2["src/services/"]
+    m2("order.service")
+  end
+  m0 -.-> m2
+  m1 -.-> m2
+  m2 --> c0
+  classDef changed stroke-width:3px
+  classDef far stroke-dasharray:5 4
+  class c0 changed
+  class m0,m1 far
