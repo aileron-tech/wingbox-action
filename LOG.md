@@ -183,3 +183,16 @@ Verification
   and dark, and one with hostile names.
 - Not verified: a run on GitHub (the rendering in a comment and in the job
   summary, the artifact upload, the three runner systems).
+
+## 2026-11-18: GitLab CI
+
+- Why: the owner asked for the check in GitLab (merge requests and CI). What: `wingbox_gitlab.py` picks the
+  two commits from GitLab's variables (merge request diff base, or the commit before a push), builds the
+  report with the functions of `wingbox_pr`, writes `wingbox-out/` (report, plan, dotenv) and, with a token,
+  one merge request note found by the marker; `gitlab/wingbox.gitlab-ci.yml` is the job to include.
+- Found while running it locally with a Python that has no wingbox: `_wingbox` accepted exit 1 of
+  `wingbox build`, so a build that never ran gave "no source module changed; nothing to check" with
+  execution ok. A build must end with 0 now; the comment says the change could not be checked.
+- Tests REQ-ACTION-060..070 (tests/test_gitlab.py). Run by hand on a public Rust repository as a merge
+  request pipeline against a local stand-in for the notes API: note created, then updated on the second
+  run; the headline equals the one the GitHub run of the same commits gives.

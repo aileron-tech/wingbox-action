@@ -4,7 +4,8 @@
     python scripts/bump_version.py 0.8.0     that version
     python scripts/bump_version.py           the newest wingbox release on PyPI
 
-Rewrites the default of the `version` input in action.yml and the version named in README.md.
+Rewrites the default of the `version` input in action.yml, the version named in README.md and the
+release the GitLab job installs (gitlab/wingbox.gitlab-ci.yml).
 """
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 VERSION = re.compile(r"^\d+\.\d+\.\d+$")
 _ACTION_DEFAULT = re.compile(r'(  version:\n    description: [^\n]+\n    default: ")([^"]+)(")')
 _README = re.compile(r"(wingbox )\d+\.\d+\.\d+( from PyPI)")
+_TEMPLATE = re.compile(r'(WINGBOX_VERSION: ")\d+\.\d+\.\d+(")')
 
 
 def with_version(action_text: str, readme_text: str, version: str) -> tuple[str, str]:
@@ -42,6 +44,10 @@ def main(args: list[str]) -> int:
     new_action, new_readme = with_version(action.read_text(encoding="utf-8"), readme.read_text(encoding="utf-8"), version)
     action.write_text(new_action, encoding="utf-8", newline="\n")
     readme.write_text(new_readme, encoding="utf-8", newline="\n")
+    # The GitLab job installs the same release, and its README example names it.
+    template = ROOT / "gitlab" / "wingbox.gitlab-ci.yml"
+    template.write_text(_TEMPLATE.sub(rf'\g<1>{version}\g<2>', template.read_text(encoding="utf-8")), encoding="utf-8", newline="\n")
+    readme.write_text(_TEMPLATE.sub(rf'\g<1>{version}\g<2>', readme.read_text(encoding="utf-8")), encoding="utf-8", newline="\n")
     print(f"default wingbox release: {version}")
     return 0
 

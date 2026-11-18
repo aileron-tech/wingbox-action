@@ -121,8 +121,10 @@ def untouched_count(report: Report) -> int:
 
 
 def needs_comment(report: Report) -> bool:
-    """A pull request that changes no source module of the graph other than tests gets no comment."""
-    return any(c.module is not None and not is_test(c.path) for c in report.changed) or bool(report.introduced)
+    """A pull request that changes no source module of the graph other than tests gets no comment, unless a
+    wingbox command failed: then the comment says the change could not be checked."""
+    return (any(c.module is not None and not is_test(c.path) for c in report.changed) or bool(report.introduced)
+            or bool(report.tool_errors))
 
 
 def result(report: Report) -> tuple[str, str, tuple[str, ...]]:
@@ -400,6 +402,14 @@ def build_comment(report: Report, full: bool = False) -> str:
     if not needs_comment(report):
         return "\n".join([MARKER, "**Wingbox**: no source module outside the tests changed in this pull request; "
                           "nothing to check.", "", footer, ""])
+    if report.tool_errors:
+        # A failed command leaves answers empty, and an empty answer must not read as "nothing uses this".
+        problem = (f"**Wingbox** could not check this change: {', '.join(_code(error) for error in report.tool_errors)}. "
+                   "The result is UNKNOWN, not a pass; the job log has the tool's message.")
+        if not any(c.module is not None and not is_test(c.path) for c in report.changed) and not report.introduced:
+            return "\n".join([MARKER, problem, "", footer, ""])
+        rest = build_comment(replace(report, tool_errors=()), full)
+        return rest.replace(MARKER + "\n", MARKER + "\n" + problem + "\n\n", 1)
     found = uses(report)
     # A file whose changed lines were sorted into items speaks through those items; a file that was not looked
     # at, or in which code outside every item changed too, is spoken of as a whole.
