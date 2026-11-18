@@ -17,6 +17,9 @@ What changed
   footer are never hidden.
 - A row omits the changed file when every listed module uses the same single
   file; "No new boundary finding." replaces the section with "None.".
+- The last line links Wingbox to https://wingbox.dev and says that the check
+  ran on the runner without a language model (REQ-ACTION-033); the examples'
+  last lines follow.
 - Tests REQ-ACTION-026..032 (`tests/test_comment_form.py`). The tests that
   pinned the old wording (REQ-ACTION-004, 005, 010, 011, 012, 014, 019, 020,
   022 and `tests/check_fixture.py`) are moved to the new wording in the same

@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Changes
+
+- The last line of the comment links Wingbox to its site and says that the
+  check runs without a language model.
+
 ## 1.0.1 - 2026-11-18
 
 ### Changes
