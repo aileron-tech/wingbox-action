@@ -167,7 +167,11 @@ class FixtureTest(unittest.TestCase):
             self.assertEqual([], check_fixture.missing(report))
             self.assertEqual(("2", "0", "1"), (outputs["untouched-dependents"], outputs["introduced-findings"], outputs["not-checked-parts"]))
             self.assertEqual(report + "\n", (temp / "summary.md").read_text(encoding="utf-8"))
-            self.assertIn(report.strip(), done.stdout)
+            # stdout holds the comment: the same heading and rows as the report, with the picture folded.
+            self.assertIn(report.split("\n")[1], done.stdout)
+            self.assertIn("- `app/api/admin` calls it at `app/api/admin.py:5` and in 1 more place\n", done.stdout)
+            self.assertIn("<details>\n<summary>More: the picture", done.stdout)
+            self.assertNotIn("<details>", report)
             self.assertTrue(Path(outputs["map"]).is_file())
             self.assertEqual(temp / "wingbox-map" / "map.html", Path(outputs["map"]))
             self.assertIn("Interactive map: the artifact `wingbox-map` of [this workflow run](https://github.com/owner/repo/actions/runs/7).", report)

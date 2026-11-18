@@ -7,21 +7,24 @@ which modules use the files you changed, but are not part of the pull request?
 Those are the places a change can break without showing up in the diff. The
 comment says it in its first line:
 
-> **Wingbox: 6 modules outside this pull request use what it changes**
+> **Wingbox: 2 items touched by this change are used by 4 modules outside this pull request**
 >
-> These modules use `src/infra/session_detail.rs`, which this pull request
-> changes. They are not in the pull request, so a change in behaviour reaches
-> them without showing in the diff:
+> `load_session_timeline` (function, `src/infra/session_detail.rs:97`) calls
+> `detect_log_format`, which calls `looks_like_claude_jsonl`, which changed.
+> These modules use it and are not in the pull request:
 >
-> - `src/cli` uses `LoadSessionTimelineError`, `load_session_timeline`
-> - `src/infra/claude` uses `LastAssistantOutput`
+> - `src/cli` calls it at `src/cli/mod.rs:331` and in 1 more place
+> - `src/infra/opencode` calls it at `src/infra/opencode.rs:992`
 > - ...
 
 You get:
 
-- **The modules to look at**: each module that uses a changed file directly,
-  with what it uses from it; when nothing outside the pull request uses the
-  changed files, the comment is one sentence.
+- **What changed, and who uses it**: the comment names the function or type
+  that holds the changed lines and the modules outside the pull request that
+  use it, each with the place (`src/cli` calls it at `src/cli/mod.rs:331`). A
+  changed private helper is reported through the public functions that call
+  it. When what changed is not used outside the pull request (a comment, a
+  test, a private item nobody calls), the comment is one sentence.
 - **Boundary findings first**: the layer, capability and pattern violations the
   pull request introduces (the ones the base branch does not have) lead the
   comment and its heading.
@@ -89,18 +92,21 @@ flowchart RL
   class m2,m3,m4,m9,m10,m11,m12 far
 ```
 
-and the comment opens with the modules to look at:
+and the comment opens with what changed and who uses it (the commit changes
+one private function, `looks_like_claude_jsonl`):
 
-> ## Wingbox: 6 modules outside this pull request use what it changes
+> ## Wingbox: 2 items touched by this change are used by 4 modules outside this pull request
 >
-> These modules use `src/infra/session_detail.rs`, which this pull request changes. They are not in the pull request, so a change in behaviour reaches them without showing in the diff:
+> `load_session_timeline` (function, `src/infra/session_detail.rs:97`) calls `detect_log_format`, which calls `looks_like_claude_jsonl`, which changed. These modules use it and are not in the pull request:
 >
-> - `src/cli` uses `LoadSessionTimelineError`, `load_session_timeline`
-> - `src/infra/claude` uses `LastAssistantOutput`
-> - `src/infra/codex_fork` uses `load_session_timeline`
+> - `src/cli` calls it at `src/cli/mod.rs:331` and in 1 more place
+> - `src/infra/codex_fork` calls it at `src/infra/codex_fork.rs:375` and in 1 more place
+> - `src/infra/opencode` calls it at `src/infra/opencode.rs:992`
+> - `src/main` calls it at `src/main.rs:426` and in 4 more places
 
-The picture is folded under the line "More: the picture, 1 through a facade or
-declaration, 6 within 2 hops".
+The picture is folded under the line "More: the picture, 2 modules that use the
+changed files but not what changed, 1 through a facade or declaration, 6 within
+2 hops".
 
 More examples, each the text the action would post, built locally and not
 posted anywhere: [a larger change in the same Rust project](examples/rust-large.md)
@@ -141,7 +147,17 @@ Free Pascal.
 - **New boundary findings**: findings of `wingbox boundaries` on the head that
   the base does not have. Known findings (in a baseline) and type-only imports
   are not counted. Without any, the comment says "No new boundary finding."
-- **The list**: modules that import or use a changed file and are not changed
+- **A changed item and its users**: the changed lines of the diff are sorted
+  into the items Wingbox lists for the file (functions, types, constants).
+  For each item that holds a changed line of code the comment names the
+  modules outside the pull request that use it, how (calls, imports, uses as
+  a type) and where. "X calls Y, which changed" means the change is in Y and
+  X, which other modules use, calls it inside the same file. Comments, blank
+  lines and the tests kept in a Rust file (`#[cfg(test)]`) change no item.
+- **Other code changed too**: lines outside every listed item (an import, a
+  Rust `impl` block, a statement at the top level) cannot be given to an
+  item, so the modules that use the file are listed as a whole.
+- **The list of a file**: modules that import or use a changed file and are not changed
   themselves. Where Wingbox follows a name to the file that defines it, the
   row says which names (at most three, then a count). Wingbox 0.10.1 does
   this for Rust; for the other languages the row names the module (and the
@@ -242,6 +258,14 @@ then writes no comment, warns, and keeps the report in the job summary.
   string) is not in it.
 - Names of what a dependent uses are given where Wingbox records them (Rust in
   0.10.1). Elsewhere the list names the file.
+- Which item a changed line belongs to is read from the layout of the file
+  (the item's first line from the graph, its end from the indentation). It is
+  careful rather than clever: what it cannot place is reported as other code
+  of the file. Methods and `impl` blocks are not items of the graph yet, so a
+  changed method is reported that way. The places of use come from `wingbox
+  usages`: exact where Wingbox records positions, by file elsewhere. At most
+  60 items are asked about in one pull request; beyond that the files are
+  taken as a whole.
 - The diagram is capped at 40 boxes and 60 arrows, as described above; the
   list in the comment names at most ten direct dependents and the job summary
   lists them all.

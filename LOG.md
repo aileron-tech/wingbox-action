@@ -1,5 +1,41 @@
 # Log
 
+## 2026-11-18: the comment names the item that changed
+
+What changed
+
+- `wingbox_changes.py` (new, pure): reads `git diff -U0` into hunks per file;
+  gives each changed line of code to the innermost item that holds it (the
+  item's first line from `wingbox module`, its end from the indentation, the
+  attribute and decorator lines above it included); comments and blank lines
+  change nothing; the lines of a Rust `#[cfg(test)]` module are tests; code in
+  no item is "other code", never blamed on the item above.
+- `wingbox_facts.py`: `Item`, `Site`, `User`, `ChangedItem` (with `via`),
+  `ChangedFile.items` and `other_code`; `items()` reads `wingbox module`,
+  `use_sites()` and `users()` read `wingbox usages --sexp`.
+- `wingbox_pr.changed_items`: for each touched item the users outside the pull
+  request; an item of the same file that calls a touched item is followed too
+  (calls only, at most 3 steps), carrying the names it goes through. 60
+  queries a pull request; an ambiguous name counts as other code.
+- `wingbox_report`: the heading and a block per item ("`X` changed" or "`X`
+  calls `Y`, which changed", then who uses it and where); test modules are
+  counted, not listed; the modules that use the file but not what changed go
+  into the folded block; with nothing used outside, one sentence. A module
+  named `tests` is a test module.
+- Tests REQ-ACTION-034..051 (`tests/test_changes.py`,
+  `tests/test_changed_items.py`, `tests/test_changed_items_gathering.py`); the
+  fixture's expected report and the end-to-end test follow.
+- Replayed on a public Rust commit whose diff touches one private function:
+  before, the comment listed the 6 modules that import the file; now it names
+  the two public functions that call the changed one and the 4 modules that
+  call those, each call site checked against the source.
+
+Why
+
+- The maintainer looked at the comment on a live pull request that changed
+  two comment lines and read "7 modules use what it changes": true of the
+  file, false of the change. His words: for this one only has to ask usages.
+
 ## 2026-11-18: the comment says the thing first
 
 What changed
