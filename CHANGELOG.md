@@ -4,8 +4,10 @@
 
 ### Changes
 
-- GitLab CI: `gitlab/wingbox.gitlab-ci.yml` runs the same check for merge
-  requests and for pushes to the default branch. The report goes to the job
+- GitLab CI: `gitlab/wingbox.gitlab-ci.yml` (Docker and Kubernetes runners)
+  and `gitlab/wingbox-shell.gitlab-ci.yml` (shell runners: the check runs in
+  a container and writes only `wingbox-out/` on the runner) run the same
+  check for merge requests and for pushes to the default branch. The report goes to the job
   log, to artifacts (`wingbox-out/`) and, with a project access token in
   `WINGBOX_GITLAB_TOKEN`, to one note on the merge request that is updated on
   each push. The result and the counts are handed to later jobs as `WINGBOX_`

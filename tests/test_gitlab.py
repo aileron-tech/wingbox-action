@@ -71,6 +71,19 @@ class NoteTest(unittest.TestCase):
         self.assertIn("/projects/group%2Fsub%2Frepo/merge_requests/7/notes", made[0][1])
 
 
+class KeysTest(unittest.TestCase):
+    def test_keys_name_the_repository_the_commits_and_the_output_folder(self) -> None:
+        """/* REQ-ACTION-075: --root, --base, --head and --out name the repository, the two commits and the folder of the output, so the script runs from any current directory; a key wins over the variable of the same meaning, and without keys the variables stand */"""
+        env = {"WINGBOX_ROOT": "/from/env", "CI_PROJECT_DIR": "/ci", "WINGBOX_BASE": "e" * 40}
+        got = gitlab.with_keys(["--root", "/repo", "--base", "a" * 40, "--head", "b" * 40, "--out", "/out"], env)
+        self.assertEqual(("/repo", "a" * 40, "b" * 40, "/out"), (got["WINGBOX_ROOT"], got["WINGBOX_BASE"], got["WINGBOX_HEAD"], got["WINGBOX_OUT"]))
+        self.assertEqual(env, gitlab.with_keys([], env))
+        self.assertEqual("/ci", gitlab.with_keys(["--root", "/repo"], env)["CI_PROJECT_DIR"])
+        self.assertEqual("/repo/wingbox-out", str(gitlab.out_folder({"WINGBOX_ROOT": "/repo"}, "/repo")).replace("\\", "/"))
+        self.assertEqual("/ci/wingbox-out", str(gitlab.out_folder({"CI_PROJECT_DIR": "/ci"}, "/repo")).replace("\\", "/"))
+        self.assertEqual("/out", str(gitlab.out_folder({"CI_PROJECT_DIR": "/ci", "WINGBOX_OUT": "/out"}, "/repo")).replace("\\", "/"))
+
+
 class WordingTest(unittest.TestCase):
     def test_gitlab_reads_merge_request(self) -> None:
         """/* REQ-ACTION-074: in GitLab the report says "merge request" where the GitHub report says "pull request"; the marker that finds the note again and the lines of the plan are left as they are */"""
@@ -118,7 +131,8 @@ class HandOnTest(unittest.TestCase):
         wrapper = (ROOT / "wingbox_gitlab.py").read_text(encoding="utf-8")
         read = set(re.findall(r'env(?:\.get\(|\[)"((?:CI|WINGBOX)_[A-Z0-9_]+)"', wrapper)) | {gitlab.TOKEN_VARIABLE}
         passed = set(re.findall(r"--env ((?:CI|WINGBOX)_[A-Z0-9_]+)", text))
-        self.assertEqual(set(), read - passed)
+        # The output folder is fixed by the mount, and the repository is the clone made inside the container.
+        self.assertEqual(set(), read - passed - {"WINGBOX_OUT"})
 
     def test_a_pipeline_with_nothing_to_compare_passes_and_says_so(self) -> None:
         """/* REQ-ACTION-068: a pipeline with nothing to compare (the first push of a branch) ends with status 0, says why and still writes wingbox.env with the result NOT_APPLICABLE, so the job's dotenv report has its file */"""

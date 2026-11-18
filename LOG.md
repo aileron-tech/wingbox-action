@@ -196,3 +196,12 @@ Verification
 - Tests REQ-ACTION-060..070 (tests/test_gitlab.py). Run by hand on a public Rust repository as a merge
   request pipeline against a local stand-in for the notes API: note created, then updated on the second
   run; the headline equals the one the GitHub run of the same commits gives.
+- First runs on a real GitLab (17.11, two shell runners), in a private test project with a copy of a
+  public Rust repository. The template with `image:` failed at once (a shell executor ignores the image;
+  the machine had Python 3.10 without pip), hence `gitlab/wingbox-shell.gitlab-ci.yml`: the check runs in
+  a container as the runner's user on its own clone. Then, all green: a push that changes only CI
+  configuration (NOT_APPLICABLE, 10 s), a merge request (note created, 14 s; updated in place on the
+  second push), the merge to the default branch (push pipeline, report in the log, artifacts and the
+  dotenv report). GitLab kept serving the old template from a branch address for some minutes: the
+  trial pins the include and the scripts to a commit, and the README says how.
+- The report says "merge request" in GitLab; `--root`, `--base`, `--head`, `--out` keys.

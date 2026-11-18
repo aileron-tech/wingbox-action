@@ -18,6 +18,7 @@ Standard library only; the only network use is the GitLab API of the instance th
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
@@ -101,6 +102,27 @@ def api_call(token: str) -> Call:
     return call
 
 
+KEYS = {"--root": "WINGBOX_ROOT", "--base": "WINGBOX_BASE", "--head": "WINGBOX_HEAD", "--out": "WINGBOX_OUT"}
+
+
+def with_keys(args: list[str], env: Mapping[str, str]) -> dict[str, str]:
+    """The environment with the command-line keys written over the variables of the same meaning:
+    --root DIR (the repository), --base REF and --head REF (the commits), --out DIR (the output folder)."""
+    parser = argparse.ArgumentParser(prog="wingbox_gitlab.py", description="Wingbox pull request check in GitLab CI.")
+    for key, name in KEYS.items():
+        parser.add_argument(key, dest=name, default=None)
+    chosen = {name: value for name, value in vars(parser.parse_args(args)).items() if value is not None}
+    return {**env, **chosen}
+
+
+def out_folder(env: Mapping[str, str], root: str) -> Path:
+    """Where the report, the plan and the variables are written: the given folder, else wingbox-out/ of the
+    project folder GitLab names, else of the repository."""
+    if env.get("WINGBOX_OUT"):
+        return Path(env["WINGBOX_OUT"])
+    return Path(env.get("CI_PROJECT_DIR") or root) / OUT_FOLDER
+
+
 def in_gitlab_words(text: str) -> str:
     """The report as GitLab's users read it: a merge request, where the report built for GitHub says a pull
     request. The marker (written with hyphens) is not touched."""
@@ -119,14 +141,14 @@ def dotenv(values: Mapping[str, str]) -> str:
 
 
 def main() -> int:
-    env = os.environ
-    root = env.get("WINGBOX_ROOT") or os.getcwd()
+    env = with_keys(sys.argv[1:], os.environ)
+    root = os.path.abspath(env.get("WINGBOX_ROOT") or os.getcwd())
     fail_on = env.get("WINGBOX_FAIL_ON", "none")
     if fail_on not in pr.FAIL_ON:
         print(f"ERROR: WINGBOX_FAIL_ON must be one of {', '.join(pr.FAIL_ON)}, not {fail_on!r}")
         return 2
     chosen = commits(env)
-    out = Path(env.get("CI_PROJECT_DIR") or root) / OUT_FOLDER
+    out = out_folder(env, root)
     out.mkdir(parents=True, exist_ok=True)
     if isinstance(chosen, Skip):
         # The job's dotenv report needs its file also when there is nothing to compare.
@@ -155,12 +177,12 @@ def main() -> int:
     if merge_request and env.get("WINGBOX_COMMENT", "true") == "true":
         token = env.get(TOKEN_VARIABLE, "")
         if not token:
-            print(f"Wingbox: no note written: the variable {TOKEN_VARIABLE} is not set; the report is in the job log and in {OUT_FOLDER}/")
+            print(f"Wingbox: no note written: the variable {TOKEN_VARIABLE} is not set; the report is in the job log and in {out}")
         else:
             try:
                 print(post_note(comment, env["CI_API_V4_URL"], env["CI_PROJECT_ID"], merge_request, api_call(token), pr.needs_comment(report)))
             except (urllib.error.URLError, KeyError, ValueError) as error:
-                print(f"WARNING: could not write the merge request note ({error}); the report is in the job log and in {OUT_FOLDER}/")
+                print(f"WARNING: could not write the merge request note ({error}); the report is in the job log and in {out}")
     return pr.exit_status(report, fail_on)
 
 
