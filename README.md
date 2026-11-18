@@ -144,6 +144,23 @@ workflow runs it on `ubuntu-latest`, `macos-latest` and `windows-latest`.
 Wingbox parses Python, TypeScript, Rust, C#, Java, Go, Ruby, PHP, Dart and
 Free Pascal.
 
+## Before a commit: check a working directory
+
+The same check runs by hand on the files as they are on disk, so an agent (or
+you) can read the plan before the commit and before a review:
+
+```bash
+python wingbox_pr.py --root /path/to/repository --base main --out /tmp/wingbox-out
+```
+
+With `--base` and no `--head` the change is the merge base of `--base` and
+`HEAD` against the working directory: uncommitted edits and untracked files
+included, git's ignore rules respected. Nothing is committed and the index is
+left alone; Wingbox writes its graph into `.wingbox/` of the repository as it
+always does. `--out` receives `wingbox-report.md` and `wingbox-plan.sexp`; the
+result line is printed. It needs `wingbox` installed in the Python that runs
+the script. `--head REF` checks a commit instead.
+
 ## Reading the comment
 
 - **The heading and the first sentence** say how many modules outside the pull
@@ -283,6 +300,64 @@ same pull request always gives the same diagram.
 | `untouched-dependents` | Number of different modules that depend on a changed file and are not changed. |
 | `introduced-findings` | Number of boundary findings the pull request introduces. |
 | `not-checked-parts` | Number of parts `wingbox boundaries` could not check. |
+
+## GitLab CI
+
+The same check runs in GitLab CI, on GitLab.com or a self-managed instance, for merge requests and
+for pushes to the default branch. Add to `.gitlab-ci.yml`:
+
+```yaml
+include:
+  - remote: "https://raw.githubusercontent.com/aileron-tech/wingbox-action/v1/gitlab/wingbox.gitlab-ci.yml"
+```
+
+That template is for runners with the Docker or Kubernetes executor. For runners with the shell
+executor include `gitlab/wingbox-shell.gitlab-ci.yml` instead: a shell runner runs the commands on
+its own machine with whatever Python that machine has, so this template runs the check in a
+container (Docker must be usable by the runner's user), with the checkout mounted read-only; the
+only folder it writes on the runner is `wingbox-out/`.
+
+The job `wingbox` (stage `test`) installs the pinned wingbox release, compares two commits and
+prints the report into the job log:
+
+| Pipeline | Compared |
+|---|---|
+| merge request | the merge request's diff base and its head commit |
+| push to the default branch | the commit before the push and the pushed commit |
+
+What it leaves:
+
+- `wingbox-out/wingbox-report.md` and `wingbox-out/wingbox-plan.sexp` (the review plan for an
+  agent) as job artifacts;
+- `wingbox-out/wingbox.env` as a dotenv report, so later jobs of the pipeline read
+  `WINGBOX_RESULT` (PASS, FAIL, UNKNOWN, NOT_APPLICABLE), `WINGBOX_EXECUTION`, `WINGBOX_REASONS`,
+  `WINGBOX_TESTS_TO_RUN`, `WINGBOX_INTRODUCED_FINDINGS`, `WINGBOX_UNTOUCHED_DEPENDENTS` and
+  `WINGBOX_NOT_CHECKED_PARTS`;
+- one note on the merge request, updated on each push, when the CI/CD variable
+  `WINGBOX_GITLAB_TOKEN` holds a project access token with the `api` scope (mask the variable).
+  The job token cannot write notes; without the variable the report stays in the log and the
+  artifacts.
+
+Settings are variables of the job; override them after the include:
+
+```yaml
+wingbox:
+  variables:
+    WINGBOX_FAIL_ON: "strict"     # none (default), violations, not-checked or strict
+    WINGBOX_HOPS: "2"
+    WINGBOX_VERSION: "0.11.0"     # the wingbox release from PyPI
+    WINGBOX_ACTION_REF: "v1"      # the tag, branch or commit of this repository the scripts come from
+```
+
+A cautious setup pins a commit in both places: the address of the include
+(`.../wingbox-action/<commit>/gitlab/...`) and `WINGBOX_ACTION_REF: "<commit>"`.
+
+`WINGBOX_BASE` and `WINGBOX_HEAD` compare two commits of your choice (for a scheduled pipeline or
+a release branch). Outside a job the script takes the same as keys and runs from any folder:
+`python wingbox_gitlab.py --root DIR --base REF --head REF --out DIR`. The job needs the whole history, which the template sets (`GIT_DEPTH: "0"`).
+A runner without access to github.com and pypi.org needs a mirror of this repository and of the
+`wingbox` package: copy `gitlab/wingbox.gitlab-ci.yml` into your project and point its two
+install lines at the mirrors.
 
 ## Permissions
 

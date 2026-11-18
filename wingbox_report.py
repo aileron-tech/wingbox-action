@@ -121,8 +121,10 @@ def untouched_count(report: Report) -> int:
 
 
 def needs_comment(report: Report) -> bool:
-    """A pull request that changes no source module of the graph other than tests gets no comment."""
-    return any(c.module is not None and not is_test(c.path) for c in report.changed) or bool(report.introduced)
+    """A pull request that changes no source module of the graph other than tests gets no comment, unless a
+    wingbox command failed: then the comment says the change could not be checked."""
+    return (any(c.module is not None and not is_test(c.path) for c in report.changed) or bool(report.introduced)
+            or bool(report.tool_errors))
 
 
 def result(report: Report) -> tuple[str, str, tuple[str, ...]]:
@@ -389,6 +391,11 @@ def build_plan(report: Report) -> str:
 _PLAN_WORK = ("(finding ", "(look ", "(look-module ", "(run-test ", "(test-changed ")
 
 
+def _build_failed(report: Report) -> bool:
+    """Whether a `wingbox build` of this run failed: then there is no graph to answer from."""
+    return any(error.startswith("wingbox build ") for error in report.tool_errors)
+
+
 def build_comment(report: Report, full: bool = False) -> str:
     """The pull request comment, or with full the job summary, in Markdown, starting with the marker.
 
@@ -403,6 +410,16 @@ def build_comment(report: Report, full: bool = False) -> str:
     if not needs_comment(report):
         return "\n".join([MARKER, "**Wingbox**: no source module outside the tests changed in this pull request; "
                           "nothing to check.", "", footer, ""])
+    problem = ""
+    if report.tool_errors:
+        # A failed command leaves answers empty, and an empty answer must not read as "nothing uses this".
+        problem = (f"**Wingbox** could not check this change{'' if _build_failed(report) else ' completely'}: "
+                   f"{', '.join(_code(error) for error in report.tool_errors)}. "
+                   "The result is UNKNOWN, not a pass; the job log has the tool's message.")
+        nothing_else = not any(c.module is not None and not is_test(c.path) for c in report.changed) and not report.introduced
+        if _build_failed(report) or nothing_else:
+            # Without a graph the usual report would be made of empty answers: say only that it was not checked.
+            return "\n".join([MARKER, problem, "", footer, ""])
     found = uses(report)
     # A file whose changed lines were sorted into items speaks through those items; a file that was not looked
     # at, or in which code outside every item changed too, is spoken of as a whole.
@@ -430,7 +447,7 @@ def build_comment(report: Report, full: bool = False) -> str:
         said.append(f"{len(named)} {what} are used by {_count(len(item_users), 'module')} outside this pull request")
     elif direct:
         said.append(f"{_count(len(direct), 'module')} outside this pull request use{'' if len(direct) > 1 else 's'} what it changes")
-    lines = [MARKER]
+    lines = [MARKER, problem, ""] if problem else [MARKER]
     if said:
         lines += ["## Wingbox: " + ", and ".join(said), ""]
     elif looked_at:

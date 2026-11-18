@@ -75,7 +75,9 @@ def _run(argv: list[str], cwd: str) -> subprocess.CompletedProcess[str]:
 
 def _wingbox(cwd: str, *args: str) -> list[str]:
     done = _run([sys.executable, "-m", "wingbox", *args], cwd)
-    if done.returncode not in (0, 1, 2):
+    # A query may end with 1 or 2 (boundaries found violations, a name is unknown); a build must end with 0:
+    # without a graph every later answer is empty, and an empty answer reads as "nothing to check".
+    if done.returncode not in ((0,) if args[:1] == ("build",) else (0, 1, 2)):
         print(f"::warning::wingbox {' '.join(args)} exited {done.returncode}: {done.stderr.strip()[-400:]}")
         TOOL_ERRORS.append(f"wingbox {args[0]} exited {done.returncode}")
     return done.stdout.splitlines()
