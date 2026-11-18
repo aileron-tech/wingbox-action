@@ -24,6 +24,7 @@ FILES_LIMIT = 2    # changed files named under one dependent in the comment
 COMMENT_LIMIT = 65536      # GitHub refuses a longer comment body
 SUMMARY_LIMIT = 1_000_000  # a job summary holds 1 MiB per step
 MAP_ARTIFACT = "wingbox-map"
+SITE = "https://wingbox.dev"
 CUT_NOTICE = "This comment was cut to fit GitHub's limit; the whole report is in the job summary of the workflow run."
 DIRECT, FACADE, FARTHER, TEST = "direct", "facade", "farther", "test"
 
@@ -225,8 +226,8 @@ def build_comment(report: Report, full: bool = False) -> str:
     dependents, the tests and the files outside the graph follow, folded in the comment and open in the
     summary. Without a direct user and without a finding the comment is one sentence. A pull request that
     changes only documents, configuration or tests gets one line."""
-    footer = (f"<sub>Wingbox {report.version}, base {_code(report.base[:7])}, head {_code(report.head[:7])}. "
-              "Built and checked on the runner; no code left it.</sub>")
+    footer = (f"<sub>[Wingbox]({SITE}) {report.version}, base {_code(report.base[:7])}, head {_code(report.head[:7])}. "
+              "Built and checked on the runner, without a language model; no code left it.</sub>")
     if not needs_comment(report):
         return "\n".join([MARKER, "**Wingbox**: no source module outside the tests changed in this pull request; "
                           "nothing to check.", "", footer, ""])

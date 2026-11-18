@@ -15,6 +15,8 @@
   shows them unfolded.
 - A row no longer repeats the changed file when every listed module uses the
   same one.
+- The last line of the comment links Wingbox to its site and says that the
+  check runs without a language model.
 
 ## 1.0.0 - 2026-11-18
 
