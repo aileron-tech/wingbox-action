@@ -45,7 +45,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))   # the modules next to
 import wingbox_changes  # noqa: E402
 from wingbox_facts import (  # noqa: E402,F401
     BLOCKING_HEADS, FINDING_HEADS, MARKER, ChangedFile, ChangedItem, Dependent, Finding, Item, NotChecked, Report, Route, Site, User,
-    dependents, findings, folder_of, introduced, items, module_of, parse_line, parse_route, selected, untouched, use_sites, users,
+    checked_modules, dependents, findings, folder_of, introduced, items, module_of, parse_line, parse_route, selected, untouched,
+    use_sites, users,
 )
 from wingbox_report import (  # noqa: E402,F401
     COMMENT_LIMIT, FACADE_FILES, FAIL_ON, FOLDER_LIMIT, LIST_LIMIT, MAP_ARTIFACT, SUMMARY_LIMIT, build_comment, build_plan,
@@ -103,8 +104,13 @@ def changed_items(root: str, changed: ChangedFile, hunks: tuple[wingbox_changes.
         return None, False, budget
     listed = items(_wingbox(root, "module", changed.module))
     touched, other = wingbox_changes.touched_items(listed, hunks, source, changed.path)
-    waiting: list[tuple[Item, tuple[str, ...]]] = [(item, ()) for item in touched]
-    seen = {(item.name, item.line) for item in touched}
+    waiting: list[tuple[Item, tuple[str, ...]]] = []
+    seen: set[str] = set()
+    for item in touched:                 # two definitions of one name (overloads) are one item
+        if item.name not in seen:
+            seen.add(item.name)
+            waiting.append((item, ()))
+    class_users: dict[str, Optional[set[str]]] = {}    # per class: the modules that use it (None: not known)
     found: list[ChangedItem] = []
     while waiting:
         if budget <= 0:
@@ -115,6 +121,28 @@ def changed_items(root: str, changed: ChangedFile, hunks: tuple[wingbox_changes.
         answer = _wingbox(root, "usages", target, "--sexp", "--all")
         sites = use_sites(answer, target)
         using = users(answer, target, changed_modules)
+        if item.kind == "method":
+            # A call of a method is often a call of that NAME (the receiver's type is not known): it counts
+            # when the module also uses the class.
+            owner = item.name.split(".", 1)[0]
+            if owner not in class_users:
+                if budget <= 0:
+                    return None, False, 0
+                budget -= 1
+                owner_target = f"{changed.module}::{owner}"
+                owner_sites = use_sites(_wingbox(root, "usages", owner_target, "--sexp", "--all"), owner_target)
+                class_users[owner] = None if owner_sites is None else {site.module for site in owner_sites}
+            known = class_users[owner]
+            if sites is None or using is None or known is None:
+                # Wingbox has no answer for the method: the change is reported as a change of its class.
+                whole = next((listed_item for listed_item in listed if listed_item.name == owner), None)
+                if whole is None:
+                    other = True
+                elif whole.name not in seen:
+                    seen.add(whole.name)
+                    waiting.append((whole, via))
+                continue
+            using = tuple(user for user in using if user.module in known)
         if sites is None or using is None:
             other = True
             continue
@@ -125,8 +153,8 @@ def changed_items(root: str, changed: ChangedFile, hunks: tuple[wingbox_changes.
             if site.module != changed.module or not site.line or site.kind != "call":
                 continue
             caller = wingbox_changes.holder(listed, source, changed.path, site.line)
-            if caller is not None and (caller.name, caller.line) not in seen:
-                seen.add((caller.name, caller.line))
+            if caller is not None and caller.name not in seen:
+                seen.add(caller.name)
                 waiting.append((caller, (item.name, *via)))
     return tuple(sorted(found, key=lambda item: item.line)), other, budget
 
@@ -135,7 +163,8 @@ def collect(root: str, base: str, head: str, hops: int, patterns: list[str], ver
     """Build the graphs of head (root) and base (a worktree) and gather the report's data."""
     names = [line for line in _git(root, "diff", "--name-only", f"{base}...{head}").splitlines() if line]
     changed_paths, skipped = selected(names, patterns)
-    head_findings, not_checked = findings(_boundaries(root))
+    head_lines = _boundaries(root)
+    head_findings, not_checked = findings(head_lines)
     with tempfile.TemporaryDirectory() as tmp:
         worktree = os.path.join(tmp, "base")
         merge_base = _git(root, "merge-base", base, head).strip()
@@ -174,7 +203,8 @@ def collect(root: str, base: str, head: str, hops: int, patterns: list[str], ver
         final_list.append(ChangedFile(c.path, c.module, untouched(list(c.untouched), changed_modules), inside, other))
     final = tuple(final_list)
     return Report(version, hops, base, head, final, tuple(new), resolved, tuple(not_checked), tuple(skipped),
-                  tests_changed=bent, tool_errors=tuple(dict.fromkeys(TOOL_ERRORS)), hashes=tuple(hashes))
+                  tests_changed=bent, tool_errors=tuple(dict.fromkeys(TOOL_ERRORS)), hashes=tuple(hashes),
+                  checked_modules=checked_modules(head_lines))
 
 
 def copy_map(root: str, folder: str) -> str:

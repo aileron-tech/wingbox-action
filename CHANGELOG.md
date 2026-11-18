@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Changes
+
+- A change inside one method of a class is reported as that method
+  (`Class.method`) with the modules that use the class and call it, not as a
+  change of the whole class with every user of the class.
+- Next to the parts that were not checked the report says on how many modules
+  the boundary rules were checked.
+
 ## 1.2.0 - 2026-11-18
 
 ### Changes

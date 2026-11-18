@@ -168,6 +168,11 @@ Free Pascal.
   that uses a changed source file directly and loses or replaces a line of
   code in the same pull request. New tests (lines only added) are not
   flagged.
+- **A changed method**: inside a class, the changed line belongs to the method
+  that holds it, named `Class.method`. Its users are the modules that use the
+  class and call a method of that name; a module that uses the class but not
+  the method is counted under "More", not listed. A change of a field or of
+  the constructor is a change of the class.
 - **Other code changed too**: lines outside every listed item (an import, a
   Rust `impl` block, a statement at the top level) cannot be given to an
   item, so the modules that use the file are listed as a whole.
@@ -321,8 +326,11 @@ then writes no comment, warns, and keeps the report in the job summary.
 - Which item a changed line belongs to is read from the layout of the file
   (the item's first line from the graph, its end from the indentation). It is
   careful rather than clever: what it cannot place is reported as other code
-  of the file. Methods and `impl` blocks are not items of the graph yet, so a
-  changed method is reported that way. The places of use come from `wingbox
+  of the file. A method is found from the layout of its class and the method
+  names of the graph; where the type of a receiver is not known to Wingbox, a
+  call counts when the calling module also uses the class, so a call of the
+  same method name on another object of such a module is listed too. Rust
+  `impl` blocks are not items of the graph yet: a change there is other code. The places of use come from `wingbox
   usages`: exact where Wingbox records positions, by file elsewhere. At most
   60 items are asked about in one pull request; beyond that the files are
   taken as a whole.

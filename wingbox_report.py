@@ -265,8 +265,9 @@ def _row(use: Use, full: bool, one_file: bool) -> str:
     return f"- {_code(use.module)} uses " + ", ".join(_code(name) for name in names) + more
 
 
-_KINDS = {"fn": "function", "cls": "type", "enm": "enum", "typ": "type", "ifc": "interface", "var": "variable", "mod": "module"}
-_VERBS = {"call": "calls it", "import": "imports it", "type": "uses it as a type"}
+_KINDS = {"fn": "function", "cls": "type", "enm": "enum", "typ": "type", "ifc": "interface", "var": "variable", "mod": "module",
+          "method": "method"}
+_VERBS = {"call": "calls it", "unresolved-call": "calls it", "import": "imports it", "type": "uses it as a type"}
 
 
 def _user_row(user: User) -> str:
@@ -379,6 +380,8 @@ def build_plan(report: Report) -> str:
     lines += [f"(run-test {_q(test.shown)} :uses {_atom(test.uses) if test.by_item else _q(test.uses)})" for test in tests_to_run(report)]
     lines += [f"(test-changed {_q(test)} :tests {_q(source)})" for test, source in report.tests_changed]
     lines += [f"(not-checked {_q(part.part)} :reason {_atom(part.reason)})" for part in report.not_checked]
+    if report.checked_modules is not None:
+        lines.append(f"(checked :modules {report.checked_modules})")
     lines += [f"(changed-file {_q(path)} :sha256 {digest})" for path, digest in report.hashes]
     return "\n".join(lines)
 
@@ -521,7 +524,10 @@ def build_comment(report: Report, full: bool = False) -> str:
         named = report.not_checked if full else report.not_checked[:FOLDER_LIMIT]
         parts = "; ".join(f"part {_code(p.part)} ({_REASONS.get(p.reason, p.reason)})" for p in named)
         extra = f"; {len(report.not_checked) - len(named)} more" if len(report.not_checked) > len(named) else ""
-        lines += [f"**Not checked**: {parts}{extra}. No finding is reported there, and that is not a pass.", ""]
+        scope = ("" if report.checked_modules is None else
+                 f" The rules were checked on {report.checked_modules:,} other modules." if report.checked_modules else
+                 " No part of this repository could be checked against boundary rules.")
+        lines += [f"**Not checked**: {parts}{extra}. No finding is reported there, and that is not a pass.{scope}", ""]
     if report.skipped:
         lines += [f"{len(report.skipped)} changed file(s) left out by the `paths` filter.", ""]
     if report.map_run:

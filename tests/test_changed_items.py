@@ -35,7 +35,7 @@ class FactsTest(unittest.TestCase):
                  "(enm src/infra/session_detail LoadSessionTimelineError 13 :lang rs (:deco derive) (:methods OpenFile))",
                  "(cls src/infra/session_detail LastAssistantOutput 19 :lang rs (:deco derive))", "(fn src/infra/session_detail load_session_timeline 97 :lang rs)",
                  "(imports src/infra/session_detail src/domain)", "(refs src/infra/session_detail src/domain/timeline::ParsedLogLine)"]
-        self.assertEqual([Item("MAX_TIMELINE_ITEMS", "fn", 10), Item("LoadSessionTimelineError", "enm", 13), Item("LastAssistantOutput", "cls", 19),
+        self.assertEqual([Item("MAX_TIMELINE_ITEMS", "fn", 10), Item("LoadSessionTimelineError", "enm", 13, ("OpenFile",)), Item("LastAssistantOutput", "cls", 19),
                           Item("load_session_timeline", "fn", 97)], facts.items(lines))
 
     def test_the_users_of_an_item_are_the_modules_outside_the_pull_request(self) -> None:

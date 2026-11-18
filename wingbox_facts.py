@@ -53,8 +53,9 @@ class Dependent:
 class Item:
     """An item of a module as the graph lists it: a function, a type, a constant, with the line it starts at."""
     name: str
-    kind: str     # fn, cls, enm, typ, ifc, var, mod
+    kind: str     # fn, cls, enm, typ, ifc, var, mod; "method" for a method found in the layout of its class
     line: int
+    methods: tuple[str, ...] = ()   # of a class: the names of its methods, as the graph lists them
 
 
 @dataclass(frozen=True)
@@ -127,6 +128,7 @@ class Report:
     tests_changed: tuple[tuple[str, str], ...] = field(default=())   # (test file, source file it tests), both changed
     tool_errors: tuple[str, ...] = field(default=())                 # wingbox commands that ended abnormally
     hashes: tuple[tuple[str, str], ...] = field(default=())          # (changed file, SHA-256 of its content at the head)
+    checked_modules: Optional[int] = None                            # modules the boundary rules were checked on, when known
 
 
 # ---------------------------------------------------------------------------
@@ -234,11 +236,17 @@ def items(lines: list[str]) -> list[Item]:
             continue
         head, args, _keys = parsed
         if head in ITEM_HEADS and len(args) >= 3 and args[2].isdigit():
-            found.append(Item(args[1], head, int(args[2])))
+            methods: tuple[str, ...] = ()
+            for extra in args[3:]:
+                if extra.startswith("(:methods ") and extra.endswith(")"):
+                    methods = tuple(_unquote(token) for token in _TOKEN.findall(extra[1:-1])[1:])
+            found.append(Item(args[1], head, int(args[2]), methods))
     return found
 
 
-_USE_ORDER = {"call": 0, "type": 1, "ref": 2, "import": 4}
+# The place of use to point at: a call before a use as a type before an import. An unresolved call is a call
+# of that method name whose receiver Wingbox could not type.
+_USE_ORDER = {"call": 0, "unresolved-call": 1, "type": 2, "ref": 3, "import": 5}
 
 
 def use_sites(lines: list[str], target: str) -> Optional[tuple[Site, ...]]:
@@ -271,12 +279,23 @@ def users(lines: list[str], target: str, changed_modules: set[str]) -> Optional[
     places: dict[str, list[tuple[int, int, str, str]]] = {}
     for site in sites:
         if site.module != own and site.module not in changed_modules:
-            places.setdefault(site.module, []).append((_USE_ORDER.get(site.kind, 3), site.line, site.kind, site.file))
+            places.setdefault(site.module, []).append((_USE_ORDER.get(site.kind, 4), site.line, site.kind, site.file))
     found = []
     for module, of_module in sorted(places.items()):
         _rank, number, kind, file_path = min(of_module)
         found.append(User(module, file_path, number, kind, len(of_module)))
     return tuple(found)
+
+
+def checked_modules(lines: list[str]) -> Optional[int]:
+    """On how many modules `wingbox boundaries` checked the rules: `:checked N` of its partial line, else of
+    its summary line; None when it prints neither."""
+    found: dict[str, int] = {}
+    for line in lines:
+        parsed = parse_line(line)
+        if parsed and parsed[0] in ("boundaries-partial", "boundaries-summary") and parsed[2].get("checked", "").isdigit():
+            found.setdefault(parsed[0], int(parsed[2]["checked"]))
+    return found.get("boundaries-partial", found.get("boundaries-summary"))
 
 
 def findings(lines: list[str]) -> tuple[list[Finding], list[NotChecked]]:
