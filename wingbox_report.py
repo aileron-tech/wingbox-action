@@ -17,7 +17,7 @@ from typing import Optional
 
 import wingbox_changes as changes
 import wingbox_diagram as diagram
-from wingbox_facts import BLOCKING_HEADS, MARKER, ChangedFile, ChangedItem, Dependent, Report, User, folder_of
+from wingbox_facts import BLOCKING_HEADS, MARKER, WORKING_TREE, ChangedFile, ChangedItem, Dependent, Report, User, folder_of
 
 FAIL_ON = ("none", "violations", "not-checked", "strict")
 LIST_LIMIT = 10    # direct dependents and findings named in the comment; the job summary names them all
@@ -405,7 +405,9 @@ def build_comment(report: Report, full: bool = False) -> str:
     dependents, the tests and the files outside the graph follow, folded in the comment and open in the
     summary. Without a direct user and without a finding the comment is one sentence. A pull request that
     changes only documents, configuration or tests gets one line."""
-    footer = (f"<sub>[Wingbox]({SITE}) {report.version}, base {_code(report.base[:7])}, head {_code(report.head[:7])}. "
+    head = ("head: the working directory (uncommitted and untracked files included)" if report.head == WORKING_TREE
+            else f"head {_code(report.head[:7])}")
+    footer = (f"<sub>[Wingbox]({SITE}) {report.version}, base {_code(report.base[:7])}, {head}. "
               "Built and checked on the runner, without a language model; no code left it.</sub>")
     if not needs_comment(report):
         return "\n".join([MARKER, "**Wingbox**: no source module outside the tests changed in this pull request; "

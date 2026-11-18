@@ -32,6 +32,21 @@ class KeysTest(unittest.TestCase):
         self.assertEqual((os.getcwd(), "pb", "ph"), pr.settings([], {}, pull)[:3])
         self.assertEqual("HEAD", pr.settings([], {"WINGBOX_BASE": "b"}, {})[2])
 
+    def test_the_report_names_the_working_directory_as_the_head(self) -> None:
+        """/* REQ-ACTION-083: when the head is the working directory, the last line of the report says so in words
+        (no commit id is shown for files that are in no commit), and the plan's head field reads `working-tree`;
+        the SHA-256 of each changed file is of the file on disk. With a commit as head the line shows its id. */"""
+        import wingbox_facts as facts
+        import wingbox_report as report
+        changed = (facts.ChangedFile("src/a.py", "src/a", (facts.Dependent("src/b", 1),)),)
+        working = facts.Report("0.11.0", 2, "a" * 40, facts.WORKING_TREE, changed, (), 0, ())
+        body = report.build_comment(working)
+        self.assertIn("base `aaaaaaa`, head: the working directory (uncommitted and untracked files included).", body)
+        self.assertTrue(report.build_plan(working).startswith(f"(review-plan :schema 1 :result PASS :execution ok :base {'a' * 40} :head working-tree "))
+        commit = facts.Report("0.11.0", 2, "a" * 40, "b" * 40, changed, (), 0, ())
+        self.assertIn("base `aaaaaaa`, head `bbbbbbb`.", report.build_comment(commit))
+        self.assertEqual(pr.WORKING_TREE, facts.WORKING_TREE)
+
     def test_a_new_file_is_one_hunk_of_added_lines(self) -> None:
         """/* REQ-ACTION-081: an untracked file of the working directory is a change of all its lines: one hunk that
         starts at line 1 and adds every line; an empty file has no hunk. */"""
@@ -68,7 +83,8 @@ class WorkingTreeTest(unittest.TestCase):
             self.assertIn("- `app/api/admin` calls it at `app/api/admin.py:5` and in 1 more place\n", report)
             self.assertTrue(plan[0].startswith(f"(review-plan :schema 1 :result UNKNOWN :execution ok :base {base} :head working-tree "), plan[0])
             self.assertTrue(any(line.startswith('(changed-file "app/services/refunds.py" :sha256 ') for line in plan), plan)
-            self.assertIn("head `working`", report)
+            self.assertIn("head: the working directory (uncommitted and untracked files included)", report)
+            self.assertNotIn("head `working`", report)
             after = subprocess.run(["git", "-C", str(repo), "status", "--porcelain"], check=True, capture_output=True, text=True).stdout
             self.assertEqual(before, after)
             self.assertEqual(base, subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip())

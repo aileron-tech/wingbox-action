@@ -53,7 +53,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))   # the modules next to
 
 import wingbox_changes  # noqa: E402
 from wingbox_facts import (  # noqa: E402,F401
-    BLOCKING_HEADS, FINDING_HEADS, MARKER, ChangedFile, ChangedItem, Dependent, Finding, Item, NotChecked, Report, Route, Site, User,
+    BLOCKING_HEADS, FINDING_HEADS, MARKER, WORKING_TREE, ChangedFile, ChangedItem, Dependent, Finding, Item, NotChecked, Report, Route, Site, User,
     checked_modules, dependents, findings, folder_of, introduced, items, module_of, parse_line, parse_route, selected, untouched,
     use_sites, users,
 )
@@ -61,9 +61,6 @@ from wingbox_report import (  # noqa: E402,F401
     COMMENT_LIMIT, FACADE_FILES, FAIL_ON, FOLDER_LIMIT, LIST_LIMIT, MAP_ARTIFACT, SUMMARY_LIMIT, build_comment, build_plan,
     changed_tests, cut, exit_status, is_facade, is_parent, is_test, needs_comment, result, tests_to_run, untouched_count, uses,
 )
-
-# The head of a check of the working directory: the files as they are on disk, not a commit.
-WORKING_TREE = "working-tree"
 
 # Wingbox commands that ended abnormally in this run: the result is then UNKNOWN, never a pass.
 TOOL_ERRORS: list[str] = []

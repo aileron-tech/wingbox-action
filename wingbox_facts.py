@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 MARKER = "<!-- wingbox-pull-request-report -->"
+# The head of a check of a working directory: the files as they are on disk, not a commit.
+WORKING_TREE = "working-tree"
 # Findings of `wingbox boundaries` that count: a known (baselined) or type-only import is not one.
 FINDING_HEADS = ("violation", "violation-candidate", "capability-violation", "capability-candidate", "pattern-violation")
 BLOCKING_HEADS = ("violation", "capability-violation", "pattern-violation")
