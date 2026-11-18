@@ -286,7 +286,7 @@ def build_comment(report: Report, full: bool = False) -> str:
     if len(named) == 1:
         only = named[0][1]
         count = len(_real_users(only))
-        said.append(f"{_code(only.name)} {'uses code that changed' if only.via else 'changed'}, and {_count(count, 'module')} "
+        said.append(f"{_code(only.name)} {'calls code that changed' if only.via else 'changed'}, and {_count(count, 'module')} "
                     f"outside this pull request use{'' if count > 1 else 's'} it")
     elif named:
         what = "items touched by this change" if any(item.via for _changed, item in named) else "changed items"
@@ -312,7 +312,7 @@ def build_comment(report: Report, full: bool = False) -> str:
         real = _real_users(item)
         several = len(real) > 1
         shown_users = real if full else real[:LIST_LIMIT]
-        happened = "uses " + ", which uses ".join(_code(name) for name in item.via) + ", which changed" if item.via else "changed"
+        happened = "calls " + ", which calls ".join(_code(name) for name in item.via) + ", which changed" if item.via else "changed"
         lines += [f"{_code(item.name)} ({_KINDS.get(item.kind, item.kind)}, {_code(f'{changed.path}:{item.line}')}) {happened}. "
                   f"{'These modules use' if several else 'This module uses'} it and {'are' if several else 'is'} not in the pull request:", ""]
         lines += [_user_row(user) for user in shown_users]

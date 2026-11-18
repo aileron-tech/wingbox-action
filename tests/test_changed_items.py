@@ -81,8 +81,8 @@ class ReportTest(unittest.TestCase):
         says through what it reaches the change, and lists its users: a changed private helper is not reported
         as used by nobody. */"""
         body = report.build_comment(make(ChangedItem("looks_like_claude_jsonl", "fn", 293, ()), REACHED))
-        self.assertIn("## Wingbox: `load_session_timeline` uses code that changed, and 1 module outside this pull request uses it\n", body)
-        self.assertIn("`load_session_timeline` (function, `src/infra/session_detail.rs:97`) uses `detect_log_format`, which uses `looks_like_claude_jsonl`, which changed. "
+        self.assertIn("## Wingbox: `load_session_timeline` calls code that changed, and 1 module outside this pull request uses it\n", body)
+        self.assertIn("`load_session_timeline` (function, `src/infra/session_detail.rs:97`) calls `detect_log_format`, which calls `looks_like_claude_jsonl`, which changed. "
                       "This module uses it and is not in the pull request:\n", body)
         self.assertIn("\n- `src/cli` calls it at `src/cli/mod.rs:331` and in 1 more place\n", body)
 

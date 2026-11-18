@@ -48,6 +48,15 @@ class GatheringTest(unittest.TestCase):
         self.assertEqual(8, left)
         self.assertEqual(["module src/a", "usages src/a::helper --sexp --all", "usages src/a::outer --sexp --all"], asked)
 
+    def test_only_a_call_carries_a_change_to_the_item_that_makes_it(self) -> None:
+        """/* REQ-ACTION-051: a change is followed from an item to the items of the file that call it; an item that
+        only names a changed type or imports the item is not followed: its users are not touched through it. */"""
+        typed = dict(USAGES, **{"src/a::helper": ["(usages-target src/a::helper :kind fn :file src/a.rs :line 5)", "(usage src/a 2 5 :kind type :file src/a.rs)"]})
+        with unittest.mock.patch.dict(USAGES, typed):
+            items, other, _left, asked = self.gather((Hunk(6, ("    2",), ("    1",)),))
+        self.assertEqual((ChangedItem("helper", "fn", 5, (), ()),), items)
+        self.assertEqual(["module src/a", "usages src/a::helper --sexp --all"], asked)
+
     def test_what_wingbox_cannot_tell_keeps_the_file_spoken_of_as_a_whole(self) -> None:
         """/* REQ-ACTION-050: an item whose users Wingbox cannot tell (an ambiguous name) counts as other code of
         the file, so the modules that use the file are still listed; when the budget of queries is spent, or

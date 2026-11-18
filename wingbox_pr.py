@@ -84,8 +84,8 @@ def changed_items(root: str, changed: ChangedFile, hunks: tuple[wingbox_changes.
     """(the items of one changed file that hold a changed line of code, each with its users outside the pull
     request; whether code outside every item changed too; the queries left).
 
-    A change reaches further than the item it is in: an item of the same file that calls a changed item is
-    looked at too (and what calls that one, up to REACH steps), with the names it goes through. So a changed
+    A change reaches further than the item it is in: an item of the same file that calls a changed item (a
+    call, not a mention of a type) is looked at too (and what calls that one, up to REACH steps), with the names it goes through. So a changed
     private helper is reported through the public items that call it.
 
     None for the items when the file cannot be looked at (it is not readable, or the budget of queries is
@@ -116,8 +116,8 @@ def changed_items(root: str, changed: ChangedFile, hunks: tuple[wingbox_changes.
         found.append(ChangedItem(item.name, item.kind, item.line, using, via))
         if len(via) >= REACH:
             continue
-        for site in sites:               # the items of this file that use it are touched by the change too
-            if site.module != changed.module or not site.line:
+        for site in sites:               # the items of this file that call it are touched by the change too
+            if site.module != changed.module or not site.line or site.kind != "call":
                 continue
             caller = wingbox_changes.holder(listed, source, changed.path, site.line)
             if caller is not None and (caller.name, caller.line) not in seen:
