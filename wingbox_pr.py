@@ -6,6 +6,9 @@ with its history. It builds the code graph of the head (and of the base, in a gi
 
 - for every changed file, the modules that depend on it within N hops and are not changed by
   the pull request, with what each direct one uses from it (`wingbox impact --sexp`);
+- inside every changed file, the items that hold a changed line of code (the diff against the
+  items of `wingbox module`) and the modules outside the pull request that use each of them
+  (`wingbox usages`);
 - the blast radius as a Mermaid diagram inside the report;
 - the layer, capability and pattern findings of `wingbox boundaries` that the head has and the
   base has not: the findings the pull request introduces;
@@ -38,9 +41,10 @@ from typing import Any, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))   # the modules next to this file, however it is loaded
 
+import wingbox_changes  # noqa: E402
 from wingbox_facts import (  # noqa: E402,F401
-    BLOCKING_HEADS, FINDING_HEADS, MARKER, ChangedFile, Dependent, Finding, NotChecked, Report, Route,
-    dependents, findings, folder_of, introduced, module_of, parse_line, parse_route, selected, untouched,
+    BLOCKING_HEADS, FINDING_HEADS, MARKER, ChangedFile, ChangedItem, Dependent, Finding, Item, NotChecked, Report, Route, Site, User,
+    dependents, findings, folder_of, introduced, items, module_of, parse_line, parse_route, selected, untouched, use_sites, users,
 )
 from wingbox_report import (  # noqa: E402,F401
     COMMENT_LIMIT, FACADE_FILES, FAIL_ON, FOLDER_LIMIT, LIST_LIMIT, MAP_ARTIFACT, SUMMARY_LIMIT, build_comment, cut,
@@ -71,6 +75,57 @@ def _boundaries(root: str) -> list[str]:
     return _wingbox(root, "boundaries")
 
 
+ITEM_QUERIES = 60   # items whose users are asked for in one pull request; files beyond that are taken as a whole
+REACH = 3           # steps from a changed item to the items of its file that call it
+
+
+def changed_items(root: str, changed: ChangedFile, hunks: tuple[wingbox_changes.Hunk, ...], changed_modules: set[str],
+                  budget: int) -> tuple[Optional[tuple[ChangedItem, ...]], bool, int]:
+    """(the items of one changed file that hold a changed line of code, each with its users outside the pull
+    request; whether code outside every item changed too; the queries left).
+
+    A change reaches further than the item it is in: an item of the same file that calls a changed item is
+    looked at too (and what calls that one, up to REACH steps), with the names it goes through. So a changed
+    private helper is reported through the public items that call it.
+
+    None for the items when the file cannot be looked at (it is not readable, or the budget of queries is
+    spent): the report then speaks of the file as a whole. An item whose users Wingbox cannot tell (its name
+    is ambiguous) counts as other code, so the file's users are still listed."""
+    assert changed.module is not None
+    try:
+        source = (Path(root) / changed.path).read_text(encoding="utf-8-sig", errors="replace").split("\n")
+    except OSError:
+        return None, False, budget
+    listed = items(_wingbox(root, "module", changed.module))
+    touched, other = wingbox_changes.touched_items(listed, hunks, source, changed.path)
+    waiting: list[tuple[Item, tuple[str, ...]]] = [(item, ()) for item in touched]
+    seen = {(item.name, item.line) for item in touched}
+    found: list[ChangedItem] = []
+    while waiting:
+        if budget <= 0:
+            return None, False, 0
+        item, via = waiting.pop(0)
+        budget -= 1
+        target = f"{changed.module}::{item.name}"
+        answer = _wingbox(root, "usages", target, "--sexp", "--all")
+        sites = use_sites(answer, target)
+        using = users(answer, target, changed_modules)
+        if sites is None or using is None:
+            other = True
+            continue
+        found.append(ChangedItem(item.name, item.kind, item.line, using, via))
+        if len(via) >= REACH:
+            continue
+        for site in sites:               # the items of this file that use it are touched by the change too
+            if site.module != changed.module or not site.line:
+                continue
+            caller = wingbox_changes.holder(listed, source, changed.path, site.line)
+            if caller is not None and (caller.name, caller.line) not in seen:
+                seen.add((caller.name, caller.line))
+                waiting.append((caller, (item.name, *via)))
+    return tuple(sorted(found, key=lambda item: item.line)), other, budget
+
+
 def collect(root: str, base: str, head: str, hops: int, patterns: list[str], version: str) -> Report:
     """Build the graphs of head (root) and base (a worktree) and gather the report's data."""
     names = [line for line in _git(root, "diff", "--name-only", f"{base}...{head}").splitlines() if line]
@@ -93,9 +148,19 @@ def collect(root: str, base: str, head: str, hops: int, patterns: list[str], ver
         if module is not None:
             changed_modules.add(module)
         changed.append(ChangedFile(path, module, ()) if module is None else ChangedFile(path, module, tuple(found)))
-    final = tuple(
-        c if c.module is None else ChangedFile(c.path, c.module, untouched(list(c.untouched), changed_modules)) for c in changed
-    )
+    hunks = wingbox_changes.hunks(_git(root, "diff", "-U0", "--no-color", "--no-ext-diff", f"{base}...{head}"))
+    budget = ITEM_QUERIES
+    final_list: list[ChangedFile] = []
+    for c in changed:
+        if c.module is None:
+            final_list.append(c)
+            continue
+        inside: Optional[tuple[ChangedItem, ...]] = None
+        other = False
+        if c.path in hunks:      # a file with no hunk (a rename, a mode change) is taken as a whole
+            inside, other, budget = changed_items(root, c, hunks[c.path], changed_modules, budget)
+        final_list.append(ChangedFile(c.path, c.module, untouched(list(c.untouched), changed_modules), inside, other))
+    final = tuple(final_list)
     return Report(version, hops, base, head, final, tuple(new), resolved, tuple(not_checked), tuple(skipped))
 
 

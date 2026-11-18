@@ -50,10 +50,53 @@ class Dependent:
 
 
 @dataclass(frozen=True)
+class Item:
+    """An item of a module as the graph lists it: a function, a type, a constant, with the line it starts at."""
+    name: str
+    kind: str     # fn, cls, enm, typ, ifc, var, mod
+    line: int
+
+
+@dataclass(frozen=True)
+class User:
+    """A module that uses a changed item and is not changed by the pull request: one place of use to point at
+    (a call before a type use before an import) and how many places it has."""
+    module: str
+    file: str
+    line: int
+    kind: str     # call, type, import, ...
+    places: int
+
+
+@dataclass(frozen=True)
+class ChangedItem:
+    """An item that holds a changed line of code, or that calls one inside the same file, with the modules
+    outside the pull request that use it. via is empty for an item that changed itself; otherwise the names
+    it goes through to the change, nearest first, the changed item last."""
+    name: str
+    kind: str
+    line: int
+    users: tuple[User, ...] = ()
+    via: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class Site:
+    """One place that uses an item (line 0 when the language has no use positions)."""
+    module: str
+    file: str
+    line: int
+    kind: str
+
+
+@dataclass(frozen=True)
 class ChangedFile:
     path: str
     module: Optional[str]                 # None: not a module of the graph (docs, config, a deleted file)
     untouched: tuple[Dependent, ...] = ()  # dependents within N hops that the pull request does not change
+    # What changed inside the file. None: not looked at (the report then speaks of the file as a whole).
+    items: Optional[tuple[ChangedItem, ...]] = None
+    other_code: bool = False               # code outside every item changed too
 
 
 @dataclass(frozen=True)
@@ -174,6 +217,63 @@ def dependents(lines: list[str]) -> tuple[Optional[str], list[Dependent]]:
             found.append(Dependent(args[1], _number(keys.get("depth", ""), 1), keys.get("via", "imports"),
                                    keys.get("through", ""), _number(keys.get("more", ""), 0), routes))
     return root, found
+
+
+ITEM_HEADS = frozenset({"fn", "cls", "enm", "typ", "ifc", "var", "mod"})
+
+
+def items(lines: list[str]) -> list[Item]:
+    """The items of a module from `wingbox module <id>`: its functions, types and constants with their lines."""
+    found: list[Item] = []
+    for line in lines:
+        parsed = parse_line(line)
+        if parsed is None:
+            continue
+        head, args, _keys = parsed
+        if head in ITEM_HEADS and len(args) >= 3 and args[2].isdigit():
+            found.append(Item(args[1], head, int(args[2])))
+    return found
+
+
+_USE_ORDER = {"call": 0, "type": 1, "ref": 2, "import": 4}
+
+
+def use_sites(lines: list[str], target: str) -> Optional[tuple[Site, ...]]:
+    """Every place that uses one item, from `wingbox usages <module>::<name> --sexp`; target is
+    `<module>::<name>`. None when the answer is not about that item (no match, an ambiguous name): who uses
+    it is then not known."""
+    answered = False
+    found: list[Site] = []
+    for line in lines:
+        parsed = parse_line(line)
+        if parsed is None:
+            continue
+        head, args, keys = parsed
+        if head == "usages-target":
+            answered = bool(args) and args[0] == target
+        elif answered and head in ("usage", "usage-file") and args:
+            number = int(args[1]) if head == "usage" and len(args) > 1 and args[1].isdigit() else 0
+            found.append(Site(args[0], keys.get("file", ""), number, keys.get("kind", "use")))
+    return tuple(found) if answered else None
+
+
+def users(lines: list[str], target: str, changed_modules: set[str]) -> Optional[tuple[User, ...]]:
+    """The modules outside the pull request that use one item: each module once, with the place to point at
+    (a call before a type use before an import) and the number of its places. The module of the item itself
+    and the modules the pull request changes are left out. None when `use_sites` cannot tell."""
+    sites = use_sites(lines, target)
+    if sites is None:
+        return None
+    own = target.split("::", 1)[0]
+    places: dict[str, list[tuple[int, int, str, str]]] = {}
+    for site in sites:
+        if site.module != own and site.module not in changed_modules:
+            places.setdefault(site.module, []).append((_USE_ORDER.get(site.kind, 3), site.line, site.kind, site.file))
+    found = []
+    for module, of_module in sorted(places.items()):
+        _rank, number, kind, file_path = min(of_module)
+        found.append(User(module, file_path, number, kind, len(of_module)))
+    return tuple(found)
 
 
 def findings(lines: list[str]) -> tuple[list[Finding], list[NotChecked]]:

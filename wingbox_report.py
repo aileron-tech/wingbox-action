@@ -11,13 +11,14 @@ Pure functions only: the same report gives the same text.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import wingbox_diagram as diagram
-from wingbox_facts import BLOCKING_HEADS, MARKER, Dependent, Report, folder_of
+from wingbox_facts import BLOCKING_HEADS, MARKER, ChangedFile, ChangedItem, Dependent, Report, User, folder_of
 
 FAIL_ON = ("none", "violations", "not-checked")
 LIST_LIMIT = 10    # direct dependents and findings named in the comment; the job summary names them all
+ITEM_LIMIT = 5     # changed items the comment gives a block to; the job summary gives every one a block
 FOLDER_LIMIT = 6   # folders named in a count
 NAMES_LIMIT = 3    # names of what a dependent uses from one changed file; the others are counted
 FILES_LIMIT = 2    # changed files named under one dependent in the comment
@@ -55,7 +56,8 @@ def is_test(path: str) -> bool:
     """A test module or file: in a test folder, or named like a test in Python, JS/TS, Go, Java, C# or Ruby.
     path is a file path or a module ID (the path without its extension)."""
     parts = _SOURCE_EXTENSION.sub("", path).split("/")
-    return any(part in _TEST_FOLDERS for part in parts[:-1]) or bool(_TEST_NAME.search(parts[-1]))
+    # A module named `tests` or `test` is the test module of its folder (Rust `tests.rs`).
+    return any(part in _TEST_FOLDERS for part in parts[:-1]) or parts[-1] in ("tests", "test") or bool(_TEST_NAME.search(parts[-1]))
 
 
 def is_facade(path: str) -> bool:
@@ -217,6 +219,29 @@ def _row(use: Use, full: bool, one_file: bool) -> str:
     return f"- {_code(use.module)} uses " + ", ".join(_code(name) for name in names) + more
 
 
+_KINDS = {"fn": "function", "cls": "type", "enm": "enum", "typ": "type", "ifc": "interface", "var": "variable", "mod": "module"}
+_VERBS = {"call": "calls it", "import": "imports it", "type": "uses it as a type"}
+
+
+def _user_row(user: User) -> str:
+    """The row of a module that uses a changed item: how, where, and in how many more places."""
+    where = f" at {_code(f'{user.file}:{user.line}')}" if user.line else f" in {_code(user.file)}" if user.file else ""
+    more = f" and in {_count(user.places - 1, 'more place')}" if user.places > 1 else ""
+    return f"- {_code(user.module)} {_VERBS.get(user.kind, 'uses it')}{where}{more}"
+
+
+def _real_users(item: ChangedItem) -> list[User]:
+    """The users of an item that are not test modules."""
+    return [user for user in item.users if not is_test(user.module)]
+
+
+def changed_items(report: Report) -> list[tuple[ChangedFile, ChangedItem]]:
+    """The items that changed, or that call what changed, and that modules outside the pull request use
+    (test modules apart), most used first."""
+    found = [(changed, item) for changed in report.changed for item in (changed.items or ()) if _real_users(item)]
+    return sorted(found, key=lambda pair: (-len(_real_users(pair[1])), pair[0].path, pair[1].line))
+
+
 def build_comment(report: Report, full: bool = False) -> str:
     """The pull request comment, or with full the job summary, in Markdown, starting with the marker.
 
@@ -232,7 +257,22 @@ def build_comment(report: Report, full: bool = False) -> str:
         return "\n".join([MARKER, "**Wingbox**: no source module outside the tests changed in this pull request; "
                           "nothing to check.", "", footer, ""])
     found = uses(report)
-    direct = [use for use in found if use.kind == DIRECT]
+    # A file whose changed lines were sorted into items speaks through those items; a file that was not looked
+    # at, or in which code outside every item changed too, is spoken of as a whole.
+    looked_at = any(changed.items is not None for changed in report.changed)
+    named = changed_items(report)
+    item_users = {user.module for _changed, item in named for user in _real_users(item)}
+    whole = {changed.path for changed in report.changed if changed.items is None or changed.other_code}
+    direct = []
+    quiet: list[str] = []      # modules that use a changed file, but not what changed in it
+    for use in found:
+        if use.kind != DIRECT:
+            continue
+        kept = [index for index, path in enumerate(use.files) if path in whole]
+        if kept:
+            direct.append(replace(use, files=tuple(use.files[index] for index in kept), names=tuple(use.names[index] for index in kept)))
+        elif use.module not in item_users:
+            quiet.append(use.module)
     through = [use for use in found if use.kind == FACADE]
     farther = [use.module for use in found if use.kind == FARTHER]
     tests = [use.module for use in found if use.kind == TEST]
@@ -243,11 +283,21 @@ def build_comment(report: Report, full: bool = False) -> str:
     said = []
     if report.introduced:
         said.append(_count(len(report.introduced), "new boundary finding"))
-    if direct:
+    if len(named) == 1:
+        only = named[0][1]
+        count = len(_real_users(only))
+        said.append(f"{_code(only.name)} {'uses code that changed' if only.via else 'changed'}, and {_count(count, 'module')} "
+                    f"outside this pull request use{'' if count > 1 else 's'} it")
+    elif named:
+        what = "items touched by this change" if any(item.via for _changed, item in named) else "changed items"
+        said.append(f"{len(named)} {what} are used by {_count(len(item_users), 'module')} outside this pull request")
+    elif direct:
         said.append(f"{_count(len(direct), 'module')} outside this pull request use{'' if len(direct) > 1 else 's'} what it changes")
     lines = [MARKER]
     if said:
         lines += ["## Wingbox: " + ", and ".join(said), ""]
+    elif looked_at:
+        lines += ["**Wingbox**: what this pull request changes is not used outside it, and it adds no boundary finding.", ""]
     else:
         lines += ["**Wingbox**: no module outside this pull request uses the files it changes directly, "
                   "and it adds no boundary finding.", ""]
@@ -258,12 +308,34 @@ def build_comment(report: Report, full: bool = False) -> str:
         if len(report.introduced) > len(shown_findings):
             lines.append(f"- ... and {len(report.introduced) - len(shown_findings)} more (the job summary lists them all)")
         lines.append("")
+    for changed, item in named if full else named[:ITEM_LIMIT]:
+        real = _real_users(item)
+        several = len(real) > 1
+        shown_users = real if full else real[:LIST_LIMIT]
+        happened = "uses " + ", which uses ".join(_code(name) for name in item.via) + ", which changed" if item.via else "changed"
+        lines += [f"{_code(item.name)} ({_KINDS.get(item.kind, item.kind)}, {_code(f'{changed.path}:{item.line}')}) {happened}. "
+                  f"{'These modules use' if several else 'This module uses'} it and {'are' if several else 'is'} not in the pull request:", ""]
+        lines += [_user_row(user) for user in shown_users]
+        if len(real) > len(shown_users):
+            lines.append(f"- ... and {len(real) - len(shown_users)} more, by folder: "
+                         f"{_folders([user.module for user in real[len(shown_users):]])} (the job summary lists them all)")
+        testing = len(item.users) - len(real)
+        if testing:
+            lines += ["", f"{_count(testing, 'test module')} use{'' if testing > 1 else 's'} it too."]
+        lines.append("")
+    if not full and len(named) > ITEM_LIMIT:
+        lines += [f"... and {len(named) - ITEM_LIMIT} more changed items that other modules use (the job summary lists them all).", ""]
     if direct:
         files = tuple(sorted({path for use in direct for path in use.files}))
         many, one_file = len(direct) > 1, len(files) == 1
-        lines += [f"{'These modules use' if many else 'This module uses'} {_files(files)}, which this pull request changes. "
-                  f"{'They are' if many else 'It is'} not in the pull request, so a change in behaviour reaches "
-                  f"{'them' if many else 'it'} without showing in the diff:", ""]
+        if named:
+            lines += [f"Other code of {_files(files)} changed too, outside the items Wingbox lists. "
+                      f"{'These modules use' if many else 'This module uses'} {'that file' if one_file else 'those files'} "
+                      f"and {'are' if many else 'is'} not in the pull request:", ""]
+        else:
+            lines += [f"{'These modules use' if many else 'This module uses'} {_files(files)}, which this pull request changes. "
+                      f"{'They are' if many else 'It is'} not in the pull request, so a change in behaviour reaches "
+                      f"{'them' if many else 'it'} without showing in the diff:", ""]
         lines += [_row(use, full, one_file) for use in direct[:limit]]
         if len(direct) > limit:
             lines.append(f"- ... and {len(direct) - limit} more, by folder: {_folders([use.module for use in direct[limit:]])} "
@@ -274,6 +346,9 @@ def build_comment(report: Report, full: bool = False) -> str:
     drawn = diagram_block(report, found)
     more = list(drawn)
     holds = ["the picture"] if drawn else []
+    if quiet:
+        more += [f"Use the changed files but not the items that changed: {len(quiet)} module(s), by folder: {_folders(quiet)}.", ""]
+        holds.append(f"{_count(len(quiet), 'module')} that use{'' if len(quiet) > 1 else 's'} the changed files but not what changed")
     if through:
         facades = tuple(sorted({path for use in through for path in use.files}))
         more += [f"Through {_files(facades)} (a module facade or the declaration of the file): "
