@@ -71,6 +71,17 @@ class NoteTest(unittest.TestCase):
         self.assertIn("/projects/group%2Fsub%2Frepo/merge_requests/7/notes", made[0][1])
 
 
+class WordingTest(unittest.TestCase):
+    def test_gitlab_reads_merge_request(self) -> None:
+        """/* REQ-ACTION-074: in GitLab the report says "merge request" where the GitHub report says "pull request"; the marker that finds the note again and the lines of the plan are left as they are */"""
+        text = gitlab.MARKER + "\n## Wingbox: 2 items touched by this change are used by 5 modules outside this pull request\n\nThis pull request changes a test. Pull requests are listed.\n"
+        said = gitlab.in_gitlab_words(text)
+        self.assertTrue(said.startswith(gitlab.MARKER + "\n"))
+        self.assertIn("outside this merge request", said)
+        self.assertIn("This merge request changes a test. Merge requests are listed.", said)
+        self.assertNotIn("pull request", said.replace(gitlab.MARKER, ""))
+
+
 class HandOnTest(unittest.TestCase):
     def test_the_results_are_written_as_variables_for_later_jobs(self) -> None:
         """/* REQ-ACTION-066: the result, its reasons and the counts are written as a dotenv file with WINGBOX_ names a later job can read; a value keeps to one line */"""
@@ -101,7 +112,7 @@ class HandOnTest(unittest.TestCase):
         text = (ROOT / "gitlab" / "wingbox-shell.gitlab-ci.yml").read_text(encoding="utf-8")
         self.assertNotIn("\n  image:", text)
         for needed in ('--user "$(id -u):$(id -g)"', '--volume "$CI_PROJECT_DIR:/repo:ro"', '--volume "$CI_PROJECT_DIR/wingbox-out:/ci/wingbox-out"',
-                       "--env WINGBOX_ROOT=/tmp/work", "--env CI_PROJECT_DIR=/ci", "git clone --quiet --no-checkout /repo /tmp/work"):
+                       "--env WINGBOX_ROOT=/tmp/work", "--env CI_PROJECT_DIR=/ci", "clone --quiet --no-checkout /repo /tmp/work"):
             self.assertIn(needed, text)
         self.assertEqual(2, text.count("--volume "))
         wrapper = (ROOT / "wingbox_gitlab.py").read_text(encoding="utf-8")

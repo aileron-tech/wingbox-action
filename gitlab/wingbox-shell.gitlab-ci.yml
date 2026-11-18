@@ -37,9 +37,9 @@ wingbox:
       "$WINGBOX_IMAGE" sh -ec '
       python -m venv /tmp/venv;
       /tmp/venv/bin/python -m pip install --disable-pip-version-check --quiet "wingbox==$WINGBOX_VERSION";
-      git clone --quiet https://github.com/aileron-tech/wingbox-action.git /tmp/action;
+      git -c init.defaultBranch=main clone --quiet https://github.com/aileron-tech/wingbox-action.git /tmp/action;
       git -C /tmp/action checkout --quiet "$WINGBOX_ACTION_REF";
-      git clone --quiet --no-checkout /repo /tmp/work;
+      git -c init.defaultBranch=main clone --quiet --no-checkout /repo /tmp/work;
       git -C /tmp/work checkout --quiet --detach "$CI_COMMIT_SHA";
       cd /tmp/work;
       exec /tmp/venv/bin/python /tmp/action/wingbox_gitlab.py'

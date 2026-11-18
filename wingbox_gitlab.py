@@ -101,6 +101,12 @@ def api_call(token: str) -> Call:
     return call
 
 
+def in_gitlab_words(text: str) -> str:
+    """The report as GitLab's users read it: a merge request, where the report built for GitHub says a pull
+    request. The marker (written with hyphens) is not touched."""
+    return text.replace("pull request", "merge request").replace("Pull request", "Merge request")
+
+
 def dotenv(values: Mapping[str, str]) -> str:
     """The outputs as lines of a dotenv file: WINGBOX_RESULT=PASS; a value with a space is quoted and kept
     to one line."""
@@ -133,9 +139,10 @@ def main() -> int:
         return 2
     patterns = [p.strip() for p in env.get("WINGBOX_PATHS", "").splitlines() if p.strip()]
     report = pr.collect(root, chosen.base, chosen.head, int(env.get("WINGBOX_HOPS", "2")), patterns, env.get("WINGBOX_VERSION", "?"))
-    comment = pr.cut(pr.build_comment(report), pr.COMMENT_LIMIT)
+    comment = in_gitlab_words(pr.cut(pr.build_comment(report), pr.COMMENT_LIMIT))
     outcome, execution, reasons = pr.result(report)
-    (out / "wingbox-report.md").write_text(pr.cut(pr.build_comment(report, full=True), pr.SUMMARY_LIMIT), encoding="utf-8", newline="\n")
+    (out / "wingbox-report.md").write_text(in_gitlab_words(pr.cut(pr.build_comment(report, full=True), pr.SUMMARY_LIMIT)),
+                                           encoding="utf-8", newline="\n")
     (out / "wingbox-plan.sexp").write_text(pr.build_plan(report) + "\n", encoding="utf-8", newline="\n")
     (out / "wingbox.env").write_text(dotenv({
         "result": outcome, "execution": execution, "reasons": "; ".join(reasons),
