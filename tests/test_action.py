@@ -172,6 +172,14 @@ class FixtureTest(unittest.TestCase):
             self.assertIn("- `app/api/admin` calls it at `app/api/admin.py:5` and in 1 more place\n", done.stdout)
             self.assertIn("<details>\n<summary>More: the picture", done.stdout)
             self.assertNotIn("<details>", report)
+            self.assertEqual(("UNKNOWN", "ok", "0"), (outputs["result"], outputs["execution"], outputs["tests-to-run"]))
+            self.assertTrue(outputs["reasons"].startswith("not-checked: . ("), outputs["reasons"])
+            plan = Path(outputs["plan"]).read_text(encoding="utf-8").splitlines()
+            self.assertTrue(plan[0].startswith(f"(review-plan :schema 1 :result UNKNOWN :execution ok :base {base} :head {head} "), plan[0])
+            self.assertIn('(changed-item "app/services/billing.py" bill :kind fn :line 4 :how changed)', plan)
+            self.assertIn('(look "app/api/admin.py" 5 :module app/api/admin :why call :item bill :places 2)', plan)
+            self.assertTrue(any(line.startswith('(changed-file "app/services/billing.py" :sha256 ') and len(line.split()[-1]) == 65 for line in plan), plan)
+            self.assertIn("Result of the boundary check: **UNKNOWN** (execution ok). Reasons: not-checked: . (", report)
             self.assertTrue(Path(outputs["map"]).is_file())
             self.assertEqual(temp / "wingbox-map" / "map.html", Path(outputs["map"]))
             self.assertIn("Interactive map: the artifact `wingbox-map` of [this workflow run](https://github.com/owner/repo/actions/runs/7).", report)
@@ -195,7 +203,7 @@ class FixtureTest(unittest.TestCase):
             done = subprocess.run([sys.executable, str(ROOT / "wingbox_pr.py")], cwd=repo, env=env, capture_output=True, text=True)
             self.assertEqual(0, done.returncode, done.stdout + done.stderr)
             self.assertRegex((temp / "output.txt").read_text(encoding="utf-8"), re.compile(r"^map=$", re.M))
-            self.assertEqual(["output.txt", "wingbox-report.md"], sorted(p.name for p in temp.iterdir()))
+            self.assertEqual(["output.txt", "wingbox-plan.sexp", "wingbox-report.md"], sorted(p.name for p in temp.iterdir()))
             self.assertNotIn("Interactive map", done.stdout)
 
 

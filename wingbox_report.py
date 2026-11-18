@@ -10,15 +10,21 @@ Pure functions only: the same report gives the same text.
 """
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, replace
+from typing import Optional
 
+import wingbox_changes as changes
 import wingbox_diagram as diagram
 from wingbox_facts import BLOCKING_HEADS, MARKER, ChangedFile, ChangedItem, Dependent, Report, User, folder_of
 
-FAIL_ON = ("none", "violations", "not-checked")
+FAIL_ON = ("none", "violations", "not-checked", "strict")
 LIST_LIMIT = 10    # direct dependents and findings named in the comment; the job summary names them all
 ITEM_LIMIT = 5     # changed items the comment gives a block to; the job summary gives every one a block
+TESTS_LIMIT = 5    # test files named in the comment; the job summary names them all
+PLAN_LIMIT = 60    # lines of the review plan carried in the comment; the plan file and the job summary hold all
+PLAN_SCHEMA = 1
 FOLDER_LIMIT = 6   # folders named in a count
 NAMES_LIMIT = 3    # names of what a dependent uses from one changed file; the others are counted
 FILES_LIMIT = 2    # changed files named under one dependent in the comment
@@ -119,13 +125,53 @@ def needs_comment(report: Report) -> bool:
     return any(c.module is not None and not is_test(c.path) for c in report.changed) or bool(report.introduced)
 
 
+def result(report: Report) -> tuple[str, str, tuple[str, ...]]:
+    """(result, execution status, reasons) of the boundary check of a pull request.
+
+    The result never reads what was not checked as a pass. FAIL: the pull request introduces a blocking
+    finding. UNKNOWN: a wingbox command ended abnormally (execution "error"), or a part of the repository was
+    not checked. NOT_APPLICABLE: no source module outside the tests changed. PASS: none of these."""
+    execution = "error" if report.tool_errors else "ok"
+    errors = tuple(f"tool-error: {error}" for error in report.tool_errors)
+    unchecked = tuple(f"not-checked: {part.part} ({part.reason})" for part in report.not_checked)
+    blocking = sum(1 for finding in report.introduced if finding.head in BLOCKING_HEADS)
+    if blocking:
+        return "FAIL", execution, (f"introduced-violations: {blocking}", *errors)
+    if errors:
+        return "UNKNOWN", execution, (*errors, *unchecked)
+    if not needs_comment(report):
+        return "NOT_APPLICABLE", execution, ("no-source-module-changed",)
+    if unchecked:
+        return "UNKNOWN", execution, unchecked
+    return "PASS", execution, ()
+
+
 def exit_status(report: Report, fail_on: str) -> int:
-    """1 when the fail-on condition holds, else 0."""
+    """1 when the fail-on condition holds, else 0. strict: everything but PASS and NOT_APPLICABLE fails."""
     if fail_on == "violations" and any(f.head in BLOCKING_HEADS for f in report.introduced):
         return 1
     if fail_on == "not-checked" and report.not_checked:
         return 1
+    if fail_on == "strict" and result(report)[0] in ("FAIL", "UNKNOWN"):
+        return 1
     return 0
+
+
+def changed_tests(raw: dict[str, tuple[Optional[str], tuple[Dependent, ...]]],
+                  hunks: dict[str, tuple[changes.Hunk, ...]]) -> tuple[tuple[str, str], ...]:
+    """(test file, source file) for every changed test that uses a changed source file directly and loses or
+    replaces a line of code in this pull request: a test changed together with the code it tests.
+
+    raw maps each changed file to its module (None outside the graph) and to all its dependents, the changed
+    ones included. A test that only gains lines is a new test, not a changed one."""
+    found = []
+    for test_path, (test_module, _dependents) in raw.items():
+        if test_module is None or not is_test(test_path) or not changes.removes_code(hunks.get(test_path, ()), test_path):
+            continue
+        for source_path, (source_module, dependents) in raw.items():
+            if source_module is not None and not is_test(source_path) and any(d.module == test_module and d.depth == 1 for d in dependents):
+                found.append((test_path, source_path))
+    return tuple(sorted(found))
 
 
 # ---------------------------------------------------------------------------
@@ -242,6 +288,104 @@ def changed_items(report: Report) -> list[tuple[ChangedFile, ChangedItem]]:
     return sorted(found, key=lambda pair: (-len(_real_users(pair[1])), pair[0].path, pair[1].line))
 
 
+@dataclass(frozen=True)
+class TestToRun:
+    """A test that uses what changed: the file (or the module when the file is not known) and what it uses,
+    an item of a changed file or the changed file as a whole."""
+    __test__ = False     # not a test case
+    shown: str
+    uses: str
+    by_item: bool
+
+
+def tests_to_run(report: Report) -> list[TestToRun]:
+    """The tests that use what the pull request changes: the test modules that use a changed item, and for a
+    file taken as a whole (not looked at, or with other code changed) the tests that use the file directly."""
+    found: dict[str, TestToRun] = {}
+    for changed in report.changed:
+        for item in changed.items or ():
+            for user in item.users:
+                if is_test(user.module):
+                    found.setdefault(user.module, TestToRun(user.file or user.module, item.name, True))
+    whole = _whole_files(report)
+    for use in uses(report):
+        paths = [path for path in use.files if path in whole]
+        if use.kind == TEST and use.depth == 1 and paths:
+            found.setdefault(use.module, TestToRun(use.module, paths[0], False))
+    return sorted(found.values(), key=lambda test: test.shown)
+
+
+def _whole_files(report: Report) -> set[str]:
+    """The changed files spoken of as a whole: not looked at, or with code outside every item changed."""
+    return {changed.path for changed in report.changed if changed.module is not None and (changed.items is None or changed.other_code)}
+
+
+def _direct_uses(report: Report, found: tuple[Use, ...], item_users: set[str]) -> tuple[list[Use], list[str]]:
+    """(the direct users of the files spoken of as a whole, each with only those files; the modules that use a
+    changed file but not what changed in it)."""
+    whole = _whole_files(report)
+    direct: list[Use] = []
+    quiet: list[str] = []
+    for use in found:
+        if use.kind != DIRECT:
+            continue
+        kept = [index for index, path in enumerate(use.files) if path in whole]
+        if kept:
+            direct.append(replace(use, files=tuple(use.files[index] for index in kept), names=tuple(use.names[index] for index in kept)))
+        elif use.module not in item_users:
+            quiet.append(use.module)
+    return direct, quiet
+
+
+_ATOM = re.compile(r"^[A-Za-z0-9_.:/!<>=+*-]+$")
+
+
+def _q(text: str) -> str:
+    return json.dumps(text, ensure_ascii=False)
+
+
+def _atom(text: str) -> str:
+    """A name as a bare word of an S-expression, or quoted when it holds anything else."""
+    return text if _ATOM.match(text) else _q(text)
+
+
+def build_plan(report: Report) -> str:
+    """The review plan of a pull request as S-expression lines, in the order to check.
+
+    A head line (schema, result, execution status, commits, wingbox version), the reasons of the result, the
+    findings, then for each changed item the places outside the pull request that use it (file, line, how),
+    the files whose other code changed with the modules that use them, the tests to run, the tests changed
+    with their code, the parts not checked and the content hash of each changed file. For a reviewing agent:
+    every `look` line is a place to open, every `run-test` line a test to run."""
+    outcome, execution, reasons = result(report)
+    lines = [f"(review-plan :schema {PLAN_SCHEMA} :result {outcome} :execution {execution} :base {report.base} :head {report.head} "
+             f":wingbox {_q(report.version)} :hops {report.hops})"]
+    lines += [f"(reason {_q(reason)})" for reason in reasons]
+    lines += [f"(finding {finding.head} {_q(finding.text)})" for finding in report.introduced]
+    named = changed_items(report)
+    for changed, item in named:
+        how = f"calls :via ({' '.join(_atom(name) for name in item.via)})" if item.via else "changed"
+        lines.append(f"(changed-item {_q(changed.path)} {_atom(item.name)} :kind {item.kind} :line {item.line} :how {how})")
+        lines += [f"(look {_q(user.file)} {user.line} :module {_atom(user.module)} :why {_atom(user.kind)} :item {_atom(item.name)} :places {user.places})"
+                  for user in _real_users(item)]
+    item_users = {user.module for _changed, item in named for user in _real_users(item)}
+    direct, _quiet = _direct_uses(report, uses(report) if needs_comment(report) else (), item_users)
+    for changed in report.changed:
+        if changed.module is not None and changed.items is None:
+            lines.append(f"(whole-file {_q(changed.path)})")
+        elif changed.other_code:
+            lines.append(f"(other-code {_q(changed.path)})")
+    lines += [f"(look-module {_atom(use.module)} :why uses :file {_q(path)})" for use in direct for path in use.files]
+    lines += [f"(run-test {_q(test.shown)} :uses {_atom(test.uses) if test.by_item else _q(test.uses)})" for test in tests_to_run(report)]
+    lines += [f"(test-changed {_q(test)} :tests {_q(source)})" for test, source in report.tests_changed]
+    lines += [f"(not-checked {_q(part.part)} :reason {_atom(part.reason)})" for part in report.not_checked]
+    lines += [f"(changed-file {_q(path)} :sha256 {digest})" for path, digest in report.hashes]
+    return "\n".join(lines)
+
+
+_PLAN_WORK = ("(finding ", "(look ", "(look-module ", "(run-test ", "(test-changed ")
+
+
 def build_comment(report: Report, full: bool = False) -> str:
     """The pull request comment, or with full the job summary, in Markdown, starting with the marker.
 
@@ -262,17 +406,7 @@ def build_comment(report: Report, full: bool = False) -> str:
     looked_at = any(changed.items is not None for changed in report.changed)
     named = changed_items(report)
     item_users = {user.module for _changed, item in named for user in _real_users(item)}
-    whole = {changed.path for changed in report.changed if changed.items is None or changed.other_code}
-    direct = []
-    quiet: list[str] = []      # modules that use a changed file, but not what changed in it
-    for use in found:
-        if use.kind != DIRECT:
-            continue
-        kept = [index for index, path in enumerate(use.files) if path in whole]
-        if kept:
-            direct.append(replace(use, files=tuple(use.files[index] for index in kept), names=tuple(use.names[index] for index in kept)))
-        elif use.module not in item_users:
-            quiet.append(use.module)
+    direct, quiet = _direct_uses(report, found, item_users)
     through = [use for use in found if use.kind == FACADE]
     farther = [use.module for use in found if use.kind == FARTHER]
     tests = [use.module for use in found if use.kind == TEST]
@@ -319,9 +453,6 @@ def build_comment(report: Report, full: bool = False) -> str:
         if len(real) > len(shown_users):
             lines.append(f"- ... and {len(real) - len(shown_users)} more, by folder: "
                          f"{_folders([user.module for user in real[len(shown_users):]])} (the job summary lists them all)")
-        testing = len(item.users) - len(real)
-        if testing:
-            lines += ["", f"{_count(testing, 'test module')} use{'' if testing > 1 else 's'} it too."]
         lines.append("")
     if not full and len(named) > ITEM_LIMIT:
         lines += [f"... and {len(named) - ITEM_LIMIT} more changed items that other modules use (the job summary lists them all).", ""]
@@ -341,6 +472,17 @@ def build_comment(report: Report, full: bool = False) -> str:
             lines.append(f"- ... and {len(direct) - limit} more, by folder: {_folders([use.module for use in direct[limit:]])} "
                          "(the job summary lists them all)")
         lines.append("")
+
+    to_run = tests_to_run(report)
+    if to_run:
+        shown_tests = to_run if full else to_run[:TESTS_LIMIT]
+        rest = f" and {len(to_run) - len(shown_tests)} more (the job summary lists them all)" if len(to_run) > len(shown_tests) else ""
+        lines += [f"Tests that use what changed ({len(to_run)}): " + ", ".join(_code(test.shown) for test in shown_tests) + rest + ".", ""]
+    if report.tests_changed:
+        pairs = sorted(report.tests_changed) if full else sorted(report.tests_changed)[:LIST_LIMIT]
+        rest = f"; {len(report.tests_changed) - len(pairs)} more" if len(report.tests_changed) > len(pairs) else ""
+        lines += ["Tests changed together with the code they test: " + "; ".join(f"{_code(test)} (tests {_code(source)})" for test, source in pairs)
+                  + rest + ". Look at what they no longer check.", ""]
 
     # The rest: folded in the comment, open in the job summary.
     drawn = diagram_block(report, found)
@@ -384,6 +526,15 @@ def build_comment(report: Report, full: bool = False) -> str:
         lines += [f"{len(report.skipped)} changed file(s) left out by the `paths` filter.", ""]
     if report.map_run:
         lines += [f"Interactive map: the artifact `{MAP_ARTIFACT}` of [this workflow run]({report.map_run}).", ""]
+    plan = build_plan(report).split("\n")
+    if full:
+        outcome, execution, reasons = result(report)
+        lines += [f"Result of the boundary check: **{outcome}** (execution {execution})." + (f" Reasons: {'; '.join(reasons)}." if reasons else ""), ""]
+        lines += ["### Review plan", "", "```lisp", *plan, "```", ""]
+    elif any(line.startswith(_PLAN_WORK) for line in plan):
+        if len(plan) > PLAN_LIMIT:
+            plan = [*plan[:PLAN_LIMIT], f"(plan-more :hidden {len(plan) - PLAN_LIMIT})"]
+        lines += ["<details>", "<summary>Review plan for an agent</summary>", "", "```lisp", *plan, "```", "", "</details>", ""]
     lines += [footer, ""]
     return "\n".join(lines)
 

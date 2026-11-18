@@ -83,6 +83,11 @@ def is_code(line: str, path: str) -> bool:
     return not (path.endswith(".php") and text.startswith("#") and not text.startswith("#["))
 
 
+def removes_code(changed: tuple["Hunk", ...], path: str) -> bool:
+    """Whether the hunks of a file remove or replace a line of code (not only add lines, not only comments)."""
+    return any(is_code(text, path) for hunk in changed for text in hunk.removed)
+
+
 def _indent(line: str) -> int:
     return len(line) - len(line.lstrip(" \t"))
 

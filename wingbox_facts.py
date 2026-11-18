@@ -124,6 +124,9 @@ class Report:
     not_checked: tuple[NotChecked, ...]
     skipped: tuple[str, ...] = field(default=())   # changed files left out by the paths filter
     map_run: str = ""                               # the workflow run that holds the map artifact, when uploaded
+    tests_changed: tuple[tuple[str, str], ...] = field(default=())   # (test file, source file it tests), both changed
+    tool_errors: tuple[str, ...] = field(default=())                 # wingbox commands that ended abnormally
+    hashes: tuple[tuple[str, str], ...] = field(default=())          # (changed file, SHA-256 of its content at the head)
 
 
 # ---------------------------------------------------------------------------

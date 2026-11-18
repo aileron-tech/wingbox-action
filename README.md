@@ -25,6 +25,13 @@ You get:
   changed private helper is reported through the public functions that call
   it. When what changed is not used outside the pull request (a comment, a
   test, a private item nobody calls), the comment is one sentence.
+- **The tests to run**: the test files that use what changed, by name. And
+  when a test changes together with the code it tests, the comment says so.
+- **A review plan for an agent**: the same facts as S-expression lines, in
+  the order to check, each with a file and a line. A reviewing agent goes
+  through the list instead of searching the repository.
+- **A strict result**: PASS, FAIL, UNKNOWN or NOT_APPLICABLE as an output of
+  the action. A part that was not checked is UNKNOWN, never PASS.
 - **Boundary findings first**: the layer, capability and pattern violations the
   pull request introduces (the ones the base branch does not have) lead the
   comment and its heading.
@@ -154,6 +161,13 @@ Free Pascal.
   a type) and where. "X calls Y, which changed" means the change is in Y and
   X, which other modules use, calls it inside the same file. Comments, blank
   lines and the tests kept in a Rust file (`#[cfg(test)]`) change no item.
+- **Tests that use what changed**: the test files that use a changed item
+  (or, for a file taken as a whole, the file). The comment names five and
+  counts the rest; the job summary names all.
+- **Tests changed together with the code they test**: a changed test file
+  that uses a changed source file directly and loses or replaces a line of
+  code in the same pull request. New tests (lines only added) are not
+  flagged.
 - **Other code changed too**: lines outside every listed item (an import, a
   Rust `impl` block, a statement at the top level) cannot be given to an
   item, so the modules that use the file are listed as a whole.
@@ -176,6 +190,52 @@ Free Pascal.
 - **Not checked**: the parts of the repository `wingbox boundaries` could not
   check (rules it cannot read, no layered style, too few files). No finding
   there is not a pass, and the comment says so.
+
+### The review plan
+
+The comment carries a folded block "Review plan for an agent", and the action
+writes the same plan to a file (output `plan`). It is a list of S-expression
+lines in the order to check:
+
+```lisp
+(review-plan :schema 1 :result UNKNOWN :execution ok :base <sha> :head <sha> :wingbox "0.11.0" :hops 2)
+(reason "not-checked: . (no-layer-style)")
+(changed-item "src/billing/invoice.py" total :kind fn :line 12 :how changed)
+(look "src/api/orders.py" 40 :module src/api/orders :why call :item total :places 2)
+(run-test "tests/test_invoice.py" :uses total)
+(test-changed "tests/test_invoice.py" :tests "src/billing/invoice.py")
+(not-checked "." :reason no-layer-style)
+(changed-file "src/billing/invoice.py" :sha256 <digest>)
+```
+
+`look` is a place outside the pull request that uses a changed item: open it.
+`look-module` is a module that uses a file whose other code changed.
+`run-test` is a test that uses what changed. `changed-item ... :how calls
+:via (a b)` means the item calls `a`, which calls `b`, which changed.
+`changed-file` gives the SHA-256 of the file at the head commit, so a reader
+can check that it looks at the same content. To hand the plan to a reviewing
+agent in the same job:
+
+```yaml
+      - uses: aileron-tech/wingbox-action@v1
+        id: wingbox
+      - run: cat "${{ steps.wingbox.outputs.plan }}"   # or pass the path to your review step
+```
+
+### The result
+
+The action sets the outputs `result`, `execution` and `reasons`:
+
+| result | when |
+|---|---|
+| `FAIL` | the pull request introduces a layer, capability or pattern violation |
+| `UNKNOWN` | a part of the repository was not checked, or a wingbox command ended abnormally (`execution` is then `error`) |
+| `NOT_APPLICABLE` | no source file outside the tests changed |
+| `PASS` | none of the above |
+
+`fail-on: strict` fails the job on `FAIL` and on `UNKNOWN`. The result is
+about the boundary rules; the list of who uses what changed is information for
+the reviewer and never fails a job.
 
 ### The diagram
 

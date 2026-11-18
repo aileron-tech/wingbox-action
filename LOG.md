@@ -1,5 +1,36 @@
 # Log
 
+## 2026-11-18: the review plan, the tests to run, the strict result
+
+What changed
+
+- `wingbox_report.tests_to_run`: the test modules that use a changed item, and
+  for a file taken as a whole the tests that use it directly; the comment
+  names up to five in one line ("Tests that use what changed"), the job
+  summary all. The per-item count of test modules is gone.
+- `wingbox_report.changed_tests` and `wingbox_changes.removes_code`: a changed
+  test that uses a changed source file directly and loses or replaces a line
+  of code is paired with that file; the comment has one line for them.
+- `wingbox_report.result`: PASS / FAIL / UNKNOWN / NOT_APPLICABLE, an
+  execution status and reasons. `wingbox_pr` records a wingbox command that
+  ends abnormally (`TOOL_ERRORS`) and the report then cannot be a PASS.
+  `fail-on: strict`; outputs `result`, `execution`, `reasons`.
+- `wingbox_report.build_plan`: the review plan as S-expression lines (schema
+  1), written to `wingbox-plan.sexp` (output `plan`), shown whole in the job
+  summary and folded in the comment (60 lines, then a count) when there is
+  something to review. `Report.hashes`: SHA-256 of each changed file at the
+  head.
+- Tests REQ-ACTION-052..059 (`tests/test_review_plan.py`); REQ-ACTION-048,
+  030 and the end-to-end test follow.
+
+Why
+
+- Pains named by people who review agent-written changes: a worker ran only
+  the tests of the file it edited and a dependent module's test failed later;
+  a test bent to pass is hard to tell from a wrong test; nobody reads a large
+  diff. And a customer of the audit use: what was not checked must never read
+  as passed. The maintainer: do all of it.
+
 ## 2026-11-18: the comment names the item that changed
 
 What changed

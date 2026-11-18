@@ -27,6 +27,7 @@ wingbox_diagram, all three pure.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import os
 import re
@@ -47,9 +48,12 @@ from wingbox_facts import (  # noqa: E402,F401
     dependents, findings, folder_of, introduced, items, module_of, parse_line, parse_route, selected, untouched, use_sites, users,
 )
 from wingbox_report import (  # noqa: E402,F401
-    COMMENT_LIMIT, FACADE_FILES, FAIL_ON, FOLDER_LIMIT, LIST_LIMIT, MAP_ARTIFACT, SUMMARY_LIMIT, build_comment, cut,
-    exit_status, is_facade, is_parent, is_test, needs_comment, untouched_count, uses,
+    COMMENT_LIMIT, FACADE_FILES, FAIL_ON, FOLDER_LIMIT, LIST_LIMIT, MAP_ARTIFACT, SUMMARY_LIMIT, build_comment, build_plan,
+    changed_tests, cut, exit_status, is_facade, is_parent, is_test, needs_comment, result, tests_to_run, untouched_count, uses,
 )
+
+# Wingbox commands that ended abnormally in this run: the result is then UNKNOWN, never a pass.
+TOOL_ERRORS: list[str] = []
 
 
 def _run(argv: list[str], cwd: str) -> subprocess.CompletedProcess[str]:
@@ -60,6 +64,7 @@ def _wingbox(cwd: str, *args: str) -> list[str]:
     done = _run([sys.executable, "-m", "wingbox", *args], cwd)
     if done.returncode not in (0, 1, 2):
         print(f"::warning::wingbox {' '.join(args)} exited {done.returncode}: {done.stderr.strip()[-400:]}")
+        TOOL_ERRORS.append(f"wingbox {args[0]} exited {done.returncode}")
     return done.stdout.splitlines()
 
 
@@ -149,6 +154,13 @@ def collect(root: str, base: str, head: str, hops: int, patterns: list[str], ver
             changed_modules.add(module)
         changed.append(ChangedFile(path, module, ()) if module is None else ChangedFile(path, module, tuple(found)))
     hunks = wingbox_changes.hunks(_git(root, "diff", "-U0", "--no-color", "--no-ext-diff", f"{base}...{head}"))
+    bent = changed_tests({c.path: (c.module, c.untouched) for c in changed}, hunks)   # untouched still holds every dependent here
+    hashes = []
+    for c in changed:
+        try:
+            hashes.append((c.path, hashlib.sha256((Path(root) / c.path).read_bytes()).hexdigest()))
+        except OSError:
+            pass     # a deleted file has no content at the head
     budget = ITEM_QUERIES
     final_list: list[ChangedFile] = []
     for c in changed:
@@ -161,7 +173,8 @@ def collect(root: str, base: str, head: str, hops: int, patterns: list[str], ver
             inside, other, budget = changed_items(root, c, hunks[c.path], changed_modules, budget)
         final_list.append(ChangedFile(c.path, c.module, untouched(list(c.untouched), changed_modules), inside, other))
     final = tuple(final_list)
-    return Report(version, hops, base, head, final, tuple(new), resolved, tuple(not_checked), tuple(skipped))
+    return Report(version, hops, base, head, final, tuple(new), resolved, tuple(not_checked), tuple(skipped),
+                  tests_changed=bent, tool_errors=tuple(dict.fromkeys(TOOL_ERRORS)), hashes=tuple(hashes))
 
 
 def copy_map(root: str, folder: str) -> str:
@@ -243,10 +256,16 @@ def main() -> int:
         _append(env["GITHUB_STEP_SUMMARY"], summary + "\n")
     report_path = os.path.join(temp, "wingbox-report.md")
     Path(report_path).write_text(summary, encoding="utf-8", newline="\n")
+    plan_path = os.path.join(temp, "wingbox-plan.sexp")
+    Path(plan_path).write_text(build_plan(report) + "\n", encoding="utf-8", newline="\n")
+    outcome, execution, reasons = result(report)
     if env.get("GITHUB_OUTPUT"):
         _append(env["GITHUB_OUTPUT"], f"report={report_path}\nmap={map_path}\nuntouched-dependents={untouched_count(report)}\n"
-                                      f"introduced-findings={len(report.introduced)}\nnot-checked-parts={len(report.not_checked)}\n")
+                                      f"introduced-findings={len(report.introduced)}\nnot-checked-parts={len(report.not_checked)}\n"
+                                      f"plan={plan_path}\nresult={outcome}\nexecution={execution}\nreasons={'; '.join(reasons)}\n"
+                                      f"tests-to-run={len(tests_to_run(report))}\n")
     print(comment)
+    print(f"Result of the boundary check: {outcome} (execution {execution})" + (f": {'; '.join(reasons)}" if reasons else ""))
     if env.get("WINGBOX_COMMENT", "true") == "true" and pull.get("number"):
         try:
             print(post_comment(comment, env["GITHUB_REPOSITORY"], int(pull["number"]), env.get("WINGBOX_TOKEN", ""),
