@@ -45,8 +45,8 @@ def main(args: list[str]) -> int:
     action.write_text(new_action, encoding="utf-8", newline="\n")
     readme.write_text(new_readme, encoding="utf-8", newline="\n")
     # The GitLab job installs the same release, and its README example names it.
-    template = ROOT / "gitlab" / "wingbox.gitlab-ci.yml"
-    template.write_text(_TEMPLATE.sub(rf'\g<1>{version}\g<2>', template.read_text(encoding="utf-8")), encoding="utf-8", newline="\n")
+    for template in sorted((ROOT / "gitlab").glob("*.gitlab-ci.yml")):
+        template.write_text(_TEMPLATE.sub(rf'\g<1>{version}\g<2>', template.read_text(encoding="utf-8")), encoding="utf-8", newline="\n")
     readme.write_text(_TEMPLATE.sub(rf'\g<1>{version}\g<2>', readme.read_text(encoding="utf-8")), encoding="utf-8", newline="\n")
     print(f"default wingbox release: {version}")
     return 0

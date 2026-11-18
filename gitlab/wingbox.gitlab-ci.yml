@@ -5,6 +5,9 @@
 #   include:
 #     - remote: "https://raw.githubusercontent.com/aileron-tech/wingbox-action/v1/gitlab/wingbox.gitlab-ci.yml"
 #
+# For runners with the Docker or Kubernetes executor. For runners with the shell executor include
+# gitlab/wingbox-shell.gitlab-ci.yml instead (it runs the same check in a container).
+#
 # The job checks every merge request and every push to the default branch. The report is in the job
 # log and in the artifact folder wingbox-out/. To get it as one note on the merge request, add a
 # masked CI/CD variable WINGBOX_GITLAB_TOKEN with a project access token (scope: api).
@@ -16,13 +19,15 @@ wingbox:
   variables:
     GIT_DEPTH: "0"                    # the whole history: the base commit is checked out next to the head
     WINGBOX_VERSION: "0.11.0"         # the wingbox release from PyPI
-    WINGBOX_ACTION_REF: "v1"          # the tag of aileron-tech/wingbox-action the scripts come from
+    WINGBOX_ACTION_REF: "v1"          # the tag, branch or commit of aileron-tech/wingbox-action the scripts come from
     WINGBOX_HOPS: "2"
     WINGBOX_FAIL_ON: "none"           # none, violations, not-checked or strict
   script:
     - pip install --disable-pip-version-check --quiet "wingbox==$WINGBOX_VERSION"
-    - git clone --quiet --depth 1 --branch "$WINGBOX_ACTION_REF" https://github.com/aileron-tech/wingbox-action.git "$CI_BUILDS_DIR/.wingbox-action"
-    - python "$CI_BUILDS_DIR/.wingbox-action/wingbox_gitlab.py"
+    - WINGBOX_TOOLS="$(mktemp -d)"
+    - git clone --quiet https://github.com/aileron-tech/wingbox-action.git "$WINGBOX_TOOLS/action"
+    - git -C "$WINGBOX_TOOLS/action" checkout --quiet "$WINGBOX_ACTION_REF"
+    - python "$WINGBOX_TOOLS/action/wingbox_gitlab.py"
   artifacts:
     when: always
     expire_in: 30 days

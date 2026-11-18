@@ -85,13 +85,29 @@ class HandOnTest(unittest.TestCase):
     def test_the_template_runs_the_wrapper_on_merge_requests_and_the_default_branch(self) -> None:
         """/* REQ-ACTION-067: the CI template fetches the whole history, installs the pinned wingbox release, runs wingbox_gitlab.py from a pinned tag of this repository, keeps the report as an artifact and runs on merge requests and on the default branch */"""
         text = (ROOT / "gitlab" / "wingbox.gitlab-ci.yml").read_text(encoding="utf-8")
-        for needed in ('GIT_DEPTH: "0"', 'pip install', '"wingbox==$WINGBOX_VERSION"', "wingbox_gitlab.py", 'WINGBOX_ACTION_REF: "v1"',
-                       "merge_request_event", "$CI_DEFAULT_BRANCH", "wingbox-out/", "dotenv: wingbox-out/wingbox.env"):
-            self.assertIn(needed, text)
-        action = (ROOT / "action.yml").read_text(encoding="utf-8")
         import re
+        action = (ROOT / "action.yml").read_text(encoding="utf-8")
         default = re.search(r'version:\n(?:.*\n)*?\s+default: "([0-9.]+)"', action).group(1)
-        self.assertIn(f'WINGBOX_VERSION: "{default}"', text)
+        for name in ("wingbox.gitlab-ci.yml", "wingbox-shell.gitlab-ci.yml"):
+            text = (ROOT / "gitlab" / name).read_text(encoding="utf-8")
+            for needed in ('GIT_DEPTH: "0"', 'pip install', '"wingbox==$WINGBOX_VERSION"', "wingbox_gitlab.py", 'WINGBOX_ACTION_REF: "v1"',
+                           'checkout --quiet "$WINGBOX_ACTION_REF"', "merge_request_event", "$CI_DEFAULT_BRANCH", "wingbox-out/",
+                           "dotenv: wingbox-out/wingbox.env", f'WINGBOX_VERSION: "{default}"'):
+                self.assertIn(needed, text, name)
+
+    def test_the_shell_template_writes_nothing_on_the_runner_but_its_output_folder(self) -> None:
+        """/* REQ-ACTION-073: the template for shell runners runs the check in a container as the runner's user, with the checkout mounted read-only and wingbox-out/ as the only writable folder of the runner, works on a clone inside the container (WINGBOX_ROOT), and hands the container every variable the wrapper reads */"""
+        import re
+        text = (ROOT / "gitlab" / "wingbox-shell.gitlab-ci.yml").read_text(encoding="utf-8")
+        self.assertNotIn("\n  image:", text)
+        for needed in ('--user "$(id -u):$(id -g)"', '--volume "$CI_PROJECT_DIR:/repo:ro"', '--volume "$CI_PROJECT_DIR/wingbox-out:/ci/wingbox-out"',
+                       "--env WINGBOX_ROOT=/work", "--env CI_PROJECT_DIR=/ci", "git clone --quiet --no-checkout /repo /work"):
+            self.assertIn(needed, text)
+        self.assertEqual(2, text.count("--volume "))
+        wrapper = (ROOT / "wingbox_gitlab.py").read_text(encoding="utf-8")
+        read = set(re.findall(r'env(?:\.get\(|\[)"((?:CI|WINGBOX)_[A-Z0-9_]+)"', wrapper)) | {gitlab.TOKEN_VARIABLE}
+        passed = set(re.findall(r"--env ((?:CI|WINGBOX)_[A-Z0-9_]+)", text))
+        self.assertEqual(set(), read - passed)
 
     def test_a_pipeline_with_nothing_to_compare_passes_and_says_so(self) -> None:
         """/* REQ-ACTION-068: a pipeline with nothing to compare (the first push of a branch) ends with status 0, says why and still writes wingbox.env with the result NOT_APPLICABLE, so the job's dotenv report has its file */"""
