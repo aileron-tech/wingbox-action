@@ -4,6 +4,15 @@
 
 ### Changes
 
+- The comment names what changed, not only which file: the function or type
+  that holds the changed lines, and the modules outside the pull request that
+  use it, with the place of each use. A changed private helper is reported
+  through the public functions that call it.
+- A change that nothing outside the pull request uses (a comment, a blank
+  line, a test kept in a Rust file, a private item nobody calls) gives one
+  sentence instead of a list of every module that imports the file.
+- Code outside the items Wingbox lists (an import, an `impl` block) still
+  lists the modules that use the file.
 - The last line of the comment links Wingbox to its site and says that the
   check runs without a language model.
 
