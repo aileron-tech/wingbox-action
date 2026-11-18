@@ -148,6 +148,37 @@ class BuildFailureTest(unittest.TestCase):
         self.assertIn("nothing to check", pr.build_comment(quiet))
         self.assertFalse(pr.needs_comment(quiet))
 
+    def test_a_failed_query_never_leaves_a_pass_in_the_text(self) -> None:
+        """/* REQ-ACTION-071: when a query failed after the build, the comment and the job summary keep the usual report under the sentence that the change could not be checked completely, and every result they print (the result line of the summary, the head of the plan) says UNKNOWN with execution error: no text of them says PASS */"""
+        import dataclasses
+        pr = gitlab.pr
+        user = pr.User("src/cli", "src/cli/mod.rs", 331, "call", 2)
+        item = pr.ChangedItem("load", "fn", 97, (user,), ())
+        changed = pr.ChangedFile("src/infra/detail.rs", "src/infra/detail", (), items=(item,))
+        report = dataclasses.replace(pr.Report("0.11.0", 2, "a" * 40, "b" * 40, (changed,), (), 0, ()),
+                                     tool_errors=("wingbox usages exited 70",))
+        for text in (pr.build_comment(report), pr.build_comment(report, full=True)):
+            self.assertIn("could not check this change", text)
+            self.assertIn("wingbox usages exited 70", text)
+            self.assertIn("load", text)
+            self.assertIn(":result UNKNOWN :execution error", text)
+            self.assertNotIn(":result PASS", text)
+            self.assertNotIn("**PASS**", text)
+            self.assertNotIn("execution ok", text)
+
+    def test_a_failed_build_prints_only_that_it_could_not_check(self) -> None:
+        """/* REQ-ACTION-072: when the build failed there is no graph, so the comment is only the sentence that the change could not be checked: no list made of empty answers under it */"""
+        import dataclasses
+        pr = gitlab.pr
+        changed = pr.ChangedFile("src/infra/detail.rs", "src/infra/detail", (), items=())
+        report = dataclasses.replace(pr.Report("0.11.0", 2, "a" * 40, "b" * 40, (changed,), (), 0, ()),
+                                     tool_errors=("wingbox build exited 1",))
+        comment = pr.build_comment(report)
+        self.assertIn("could not check this change", comment)
+        self.assertNotIn("not used outside", comment)
+        self.assertNotIn("review-plan", comment)
+        self.assertEqual(5, len(comment.split("\n")))
+
 
 if __name__ == "__main__":
     unittest.main()
