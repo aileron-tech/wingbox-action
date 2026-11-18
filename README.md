@@ -48,7 +48,7 @@ the tests gets no comment; the job summary says so in one line.
 
 The action uses [Wingbox](https://github.com/aileron-tech/wingbox), an
 open-source code graph that is built on the runner, and installs
-wingbox 0.10.1 from PyPI.
+wingbox 0.11.0 from PyPI.
 
 ## What the comment looks like
 

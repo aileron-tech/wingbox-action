@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.0 - 2026-11-18
 
 ### Changes
 
@@ -14,6 +14,7 @@
   UNKNOWN or NOT_APPLICABLE. A part that was not checked or a tool error is
   UNKNOWN, never PASS. `fail-on: strict` fails the job on FAIL and UNKNOWN.
 - The plan names the SHA-256 of each changed file at the head commit.
+- The default Wingbox release the check installs is 0.11.0 (input `version`).
 
 ## 1.1.0 - 2026-11-18
 
