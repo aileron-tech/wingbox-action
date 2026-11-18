@@ -87,7 +87,7 @@ class ReportTest(unittest.TestCase):
         self.assertIn("\n- `src/cli` calls it at `src/cli/mod.rs:331` and in 1 more place\n", body)
 
     def test_test_modules_that_use_a_changed_item_are_counted(self) -> None:
-        """/* REQ-ACTION-048: test modules that use a changed item are not rows: they are counted after the rows;
+        """/* REQ-ACTION-048: test modules that use a changed item are not rows: they are named after the rows;
         an item that only tests use is not one that modules outside the pull request use. A module named
         `tests` (Rust `src/cli/tests.rs`) is a test module. */"""
         self.assertTrue(report.is_test("src/cli/tests") and report.is_test("src/cli/tests.rs") and not report.is_test("src/cli/testing_tools"))
@@ -96,7 +96,7 @@ class ReportTest(unittest.TestCase):
         body = report.build_comment(make(item))
         self.assertIn("## Wingbox: `load_session_timeline` changed, and 1 module outside this pull request uses it\n", body)
         self.assertNotIn("- `tests/test_timeline`", body)
-        self.assertIn("\n- `src/cli` calls it at `src/cli/mod.rs:331`\n\n2 test modules use it too.\n", body)
+        self.assertIn("\n- `src/cli` calls it at `src/cli/mod.rs:331`\n\nTests that use what changed (2): `src/cli/tests.rs`, `tests/test_timeline.rs`.\n", body)
         only_tests = report.build_comment(make(ChangedItem("short_id", "fn", 271, (User("tests/test_ids", "tests/test_ids.rs", 4, "call", 1),))))
         self.assertIn("**Wingbox**: what this pull request changes is not used outside it, and it adds no boundary finding.\n", only_tests)
 

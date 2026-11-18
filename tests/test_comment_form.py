@@ -104,7 +104,7 @@ class OrderTest(unittest.TestCase):
         away, the tests and the files outside the code graph sit in one folded block whose summary line says
         what it holds; the listed modules stay above it. The job summary (full) shows the same content unfolded. */"""
         body = report.build_comment(make(ONE_FILE))
-        self.assertEqual((1, 1), (body.count("<details>"), body.count("</details>")))
+        self.assertEqual((2, 2), (body.count("<details>"), body.count("</details>")))   # the rest, and the review plan
         self.assertIn("<summary>More: the picture, 1 through a facade or declaration, 1 within 2 hops, 1 test module, 1 file outside the code graph</summary>\n\n", body)
         opened, closed = body.index("<details>"), body.index("</details>")
         self.assertLess(body.index("- `src/plain`"), opened)

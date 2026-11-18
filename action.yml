@@ -13,7 +13,7 @@ inputs:
     description: How far dependents are followed from each changed file.
     default: "2"
   fail-on:
-    description: "none, violations (a layer, capability or pattern violation introduced by the pull request) or not-checked (a part that could not be checked)."
+    description: "none, violations (a layer, capability or pattern violation introduced by the pull request), not-checked (a part that could not be checked) or strict (everything but a PASS or NOT_APPLICABLE result)."
     default: none
   comment:
     description: Write the report as one comment on the pull request, updated on each push.
@@ -56,6 +56,21 @@ outputs:
   not-checked-parts:
     description: Number of parts wingbox boundaries could not check.
     value: ${{ steps.check.outputs.not-checked-parts }}
+  plan:
+    description: Path of the review plan (S-expression lines) for a reviewing agent.
+    value: ${{ steps.check.outputs.plan }}
+  result:
+    description: "Result of the boundary check: PASS, FAIL, UNKNOWN or NOT_APPLICABLE. A part that was not checked or a tool error is UNKNOWN, never PASS."
+    value: ${{ steps.check.outputs.result }}
+  execution:
+    description: "ok, or error when a wingbox command ended abnormally."
+    value: ${{ steps.check.outputs.execution }}
+  reasons:
+    description: The reasons of the result, separated by semicolons; empty for PASS.
+    value: ${{ steps.check.outputs.reasons }}
+  tests-to-run:
+    description: Number of tests that use what the pull request changes.
+    value: ${{ steps.check.outputs.tests-to-run }}
 
 runs:
   using: composite

@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Changes
+
+- The comment names the tests that use what changed, and says when a test
+  changes together with the code it tests.
+- A review plan for a reviewing agent: the changed items, the places that use
+  them, the tests to run and what was not checked, as S-expression lines in
+  the order to check; in a folded block of the comment and in a file (output
+  `plan`).
+- A strict result as outputs (`result`, `execution`, `reasons`): PASS, FAIL,
+  UNKNOWN or NOT_APPLICABLE. A part that was not checked or a tool error is
+  UNKNOWN, never PASS. `fail-on: strict` fails the job on FAIL and UNKNOWN.
+- The plan names the SHA-256 of each changed file at the head commit.
+
 ## 1.1.0 - 2026-11-18
 
 ### Changes
