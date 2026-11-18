@@ -1,5 +1,43 @@
 # Log
 
+## 2026-11-18: the comment says the thing first
+
+What changed
+
+- `wingbox_report.build_comment`: a heading in a full sentence ("N modules
+  outside this pull request use what it changes", with the new boundary
+  findings named first when there are any) and a first paragraph that names
+  the changed files those modules use and why it matters; then the findings,
+  then the modules. Without a direct user and without a finding the comment is
+  one sentence and has no heading.
+- The diagram and the counts (facade users, farther modules, tests, files
+  outside the graph) go into one `<details>` block in the comment, with a
+  summary line that says what it holds; the job summary (`full`) shows them
+  unfolded. `cut` closes a folded block it leaves open, so the notice and the
+  footer are never hidden.
+- A row omits the changed file when every listed module uses the same single
+  file; "No new boundary finding." replaces the section with "None.".
+- Tests REQ-ACTION-026..032 (`tests/test_comment_form.py`). The tests that
+  pinned the old wording (REQ-ACTION-004, 005, 010, 011, 012, 014, 019, 020,
+  022 and `tests/check_fixture.py`) are moved to the new wording in the same
+  change: the requirement itself changed, on the maintainer's word.
+- `examples/` replayed with wingbox 0.10.1 (the same commits; the diagrams are
+  byte for byte the same) and the README follows.
+
+Why
+
+- The maintainer read the first comment on a real pull request and could not
+  tell what it was for or how to read it: the first line was a row of counts,
+  the findings sat at the bottom, and the diagram took the screen. A comment
+  that appears on every pull request is read only if its first line is worth
+  reading.
+
+Not in this change
+
+- Saying which item changed ("`load_session_timeline` changed; five modules
+  outside the pull request use it") needs the extent of each item from
+  Wingbox; it is queued there.
+
 ## 2026-11-18: Wingbox 0.10.1, the reasons, the diagram
 
 What changed

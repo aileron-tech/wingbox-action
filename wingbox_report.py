@@ -1,9 +1,11 @@
 """The report of the pull request check, in Markdown: the comment and the job summary.
 
 From the data of a Report (wingbox_facts) it sorts the modules that depend on the changed files and
-are not changed (direct uses, users of a facade or declaration, farther ones, tests), says what each
-direct one uses, draws them (wingbox_diagram), lists the boundary findings the pull request
-introduces and the parts that were not checked, and cuts the comment to GitHub's size limit.
+are not changed (direct uses, users of a facade or declaration, farther ones, tests). The report says
+the thing first, in a sentence: how many modules outside the pull request use what it changes; then the
+boundary findings the pull request introduces, then those modules with what each uses; the diagram
+(wingbox_diagram) and the counts of everything farther away are folded in the comment. It names the
+parts that were not checked, and cuts the comment to GitHub's size limit.
 Pure functions only: the same report gives the same text.
 """
 from __future__ import annotations
@@ -197,13 +199,32 @@ def _after_blank(lines: list[str], added: list[str]) -> list[str]:
     return added if lines[-1] == "" else ["", *added]
 
 
+def _count(number: int, noun: str) -> str:
+    """`1 module`, `3 modules`."""
+    return f"{number} {noun}" if number == 1 else f"{number} {noun}s"
+
+
+def _row(use: Use, full: bool, one_file: bool) -> str:
+    """The row of a direct dependent. When every row is about the same single changed file, the file is not
+    repeated: the module, and what it uses from the file when the facts name it."""
+    if not one_file:
+        return f"- {_code(use.module)} uses {_used(use, full)}"
+    names, count = use.names[0] if use.names else ((), 0)
+    if not names:
+        return f"- {_code(use.module)}"
+    more = f" and {count - len(names)} more" if count > len(names) else ""
+    return f"- {_code(use.module)} uses " + ", ".join(_code(name) for name in names) + more
+
+
 def build_comment(report: Report, full: bool = False) -> str:
     """The pull request comment, or with full the job summary, in Markdown, starting with the marker.
 
-    It leads with the counts and the diagram; names the direct dependents that are not tests with what they
-    use from the changed files (the comment at most LIST_LIMIT of them, the summary all); counts the users
-    of a facade, the farther dependents and the tests by folder; then the findings and the parts not
-    checked. A pull request that changes only documents, configuration or tests gets one line."""
+    It says the thing first: a heading and a sentence with how many modules outside the pull request use what
+    it changes; then the boundary findings the pull request introduces, then those modules with what they use
+    (the comment at most LIST_LIMIT of them, the summary all). The diagram, the users of a facade, the farther
+    dependents, the tests and the files outside the graph follow, folded in the comment and open in the
+    summary. Without a direct user and without a finding the comment is one sentence. A pull request that
+    changes only documents, configuration or tests gets one line."""
     footer = (f"<sub>Wingbox {report.version}, base {_code(report.base[:7])}, head {_code(report.head[:7])}. "
               "Built and checked on the runner; no code left it.</sub>")
     if not needs_comment(report):
@@ -214,62 +235,80 @@ def build_comment(report: Report, full: bool = False) -> str:
     through = [use for use in found if use.kind == FACADE]
     farther = [use.module for use in found if use.kind == FARTHER]
     tests = [use.module for use in found if use.kind == TEST]
-    in_graph = [c for c in report.changed if c.module is not None]
-    limit = len(direct) if full else LIST_LIMIT
-    lines = [MARKER, "## Wingbox: what this pull request touches", ""]
-    lines.append(
-        f"**{len(direct)}** module(s) not changed by this pull request use a changed file directly"
-        + (f"; {len(through)} more through a module facade or declaration" if through else "")
-        + (f"; {len(farther)} within {report.hops} hops" if farther else "")
-        + (f"; {len(tests)} test module(s)" if tests else "")
-        + f". **{len(report.introduced)}** new boundary finding(s). "
-        f"{len(report.changed)} changed file(s), {len(in_graph)} in the code graph."
-    )
-    lines.append("")
-    lines += diagram_block(report, found)
-    lines += ["### Not changed, but uses what changed", ""]
-    if not found:
-        lines.append("Nothing: every module that depends on a changed file is changed too, or nothing depends on them.")
-    if direct:
-        lines += ["Directly:", ""]
-        lines += [f"- {_code(use.module)} uses {_used(use, full)}" for use in direct[:limit]]
-        if len(direct) > limit:
-            lines.append(f"- ... and {len(direct) - limit} more, by folder: {_folders([use.module for use in direct[limit:]])} "
-                         "(the job summary lists them all)")
-    if through:
-        facades = tuple(sorted({path for use in through for path in use.files}))
-        lines += _after_blank(lines, [f"Through {_files(facades)} (a module facade or the declaration of the file): "
-                                      f"{len(through)} module(s), by folder: {_folders([use.module for use in through])}. "
-                                      "They see the change only if it alters an item they use."])
-    if farther:
-        lines += _after_blank(lines, [f"Within {report.hops} hops, by folder: {_folders(farther)}."])
-    if tests:
-        lines += _after_blank(lines, [f"Tests that use the changed code ({len(tests)}), by folder: {_folders(tests)}."])
     outside = [c.path for c in report.changed if c.module is None]
-    if outside:
-        shown = outside if full else outside[:5]
-        lines += ["", f"Not in the code graph ({len(outside)}: documents, configuration or deleted files): "
-                  + ", ".join(_code(p) for p in shown) + (f" and {len(outside) - len(shown)} more" if len(outside) > len(shown) else "") + "."]
-    lines += ["", "### Boundary findings introduced by this pull request", ""]
+    limit = len(direct) if full else LIST_LIMIT
+
+    # The thing first.
+    said = []
+    if report.introduced:
+        said.append(_count(len(report.introduced), "new boundary finding"))
+    if direct:
+        said.append(f"{_count(len(direct), 'module')} outside this pull request use{'' if len(direct) > 1 else 's'} what it changes")
+    lines = [MARKER]
+    if said:
+        lines += ["## Wingbox: " + ", and ".join(said), ""]
+    else:
+        lines += ["**Wingbox**: no module outside this pull request uses the files it changes directly, "
+                  "and it adds no boundary finding.", ""]
     if report.introduced:
         shown_findings = report.introduced if full else report.introduced[:LIST_LIMIT]
+        lines += ["### New boundary findings", ""]
         lines += [f"- {finding.head}: {finding.text}" for finding in shown_findings]
         if len(report.introduced) > len(shown_findings):
             lines.append(f"- ... and {len(report.introduced) - len(shown_findings)} more (the job summary lists them all)")
-    else:
-        lines.append("None.")
+        lines.append("")
+    if direct:
+        files = tuple(sorted({path for use in direct for path in use.files}))
+        many, one_file = len(direct) > 1, len(files) == 1
+        lines += [f"{'These modules use' if many else 'This module uses'} {_files(files)}, which this pull request changes. "
+                  f"{'They are' if many else 'It is'} not in the pull request, so a change in behaviour reaches "
+                  f"{'them' if many else 'it'} without showing in the diff:", ""]
+        lines += [_row(use, full, one_file) for use in direct[:limit]]
+        if len(direct) > limit:
+            lines.append(f"- ... and {len(direct) - limit} more, by folder: {_folders([use.module for use in direct[limit:]])} "
+                         "(the job summary lists them all)")
+        lines.append("")
+
+    # The rest: folded in the comment, open in the job summary.
+    drawn = diagram_block(report, found)
+    more = list(drawn)
+    holds = ["the picture"] if drawn else []
+    if through:
+        facades = tuple(sorted({path for use in through for path in use.files}))
+        more += [f"Through {_files(facades)} (a module facade or the declaration of the file): "
+                 f"{len(through)} module(s), by folder: {_folders([use.module for use in through])}. "
+                 "They see the change only if it alters an item they use.", ""]
+        holds.append(f"{len(through)} through a facade or declaration")
+    if farther:
+        more += [f"Within {report.hops} hops, by folder: {_folders(farther)}.", ""]
+        holds.append(f"{len(farther)} within {report.hops} hops")
+    if tests:
+        more += [f"Tests that use the changed code ({len(tests)}), by folder: {_folders(tests)}.", ""]
+        holds.append(_count(len(tests), "test module"))
+    if outside:
+        shown = outside if full else outside[:5]
+        more += [f"Not in the code graph ({len(outside)}: documents, configuration or deleted files): "
+                 + ", ".join(_code(p) for p in shown) + (f" and {len(outside) - len(shown)} more" if len(outside) > len(shown) else "") + ".", ""]
+        holds.append(f"{_count(len(outside), 'file')} outside the code graph")
+    if more and full:
+        lines += more
+    elif more:
+        lines += ["<details>", f"<summary>More: {', '.join(holds)}</summary>", "", *more, "</details>", ""]
+
+    if said and not report.introduced:
+        lines += ["No new boundary finding.", ""]
     if report.resolved:
-        lines.append(f"\n{report.resolved} finding(s) of the base branch are gone in this pull request.")
+        lines += [f"{report.resolved} finding(s) of the base branch are gone in this pull request.", ""]
     if report.not_checked:
         named = report.not_checked if full else report.not_checked[:FOLDER_LIMIT]
         parts = "; ".join(f"part {_code(p.part)} ({_REASONS.get(p.reason, p.reason)})" for p in named)
-        more = f"; {len(report.not_checked) - len(named)} more" if len(report.not_checked) > len(named) else ""
-        lines += ["", f"**Not checked**: {parts}{more}. No finding is reported there, and that is not a pass."]
+        extra = f"; {len(report.not_checked) - len(named)} more" if len(report.not_checked) > len(named) else ""
+        lines += [f"**Not checked**: {parts}{extra}. No finding is reported there, and that is not a pass.", ""]
     if report.skipped:
-        lines.append(f"\n{len(report.skipped)} changed file(s) left out by the `paths` filter.")
+        lines += [f"{len(report.skipped)} changed file(s) left out by the `paths` filter.", ""]
     if report.map_run:
-        lines += ["", f"Interactive map: the artifact `{MAP_ARTIFACT}` of [this workflow run]({report.map_run})."]
-    lines += ["", footer, ""]
+        lines += [f"Interactive map: the artifact `{MAP_ARTIFACT}` of [this workflow run]({report.map_run}).", ""]
+    lines += [footer, ""]
     return "\n".join(lines)
 
 
@@ -295,7 +334,7 @@ def cut(body: str, limit: int) -> str:
     lines = body.split("\n")
     last = max(index for index, line in enumerate(lines) if line.strip())
     tail = f"\n{CUT_NOTICE}\n\n{lines[last]}\n"
-    budget = limit - _size(tail)
+    budget = limit - _size(tail) - _size("\n\n</details>")
     kept = [lines[0]]
     size = _size(lines[0]) + 1
     for line in lines[1:last]:
@@ -309,6 +348,7 @@ def cut(body: str, limit: int) -> str:
             opened = index if opened < 0 else -1
     if opened >= 0:
         kept = kept[:opened]
-    while len(kept) > 1 and (not kept[-1].strip() or kept[-1].startswith("#")):
+    while len(kept) > 1 and (not kept[-1].strip() or kept[-1].startswith("#") or kept[-1].startswith("<summary>") or kept[-1] == "<details>"):
         kept.pop()
-    return "\n".join(kept) + "\n" + tail
+    folded = kept.count("<details>") > kept.count("</details>")   # the notice and the footer must not be hidden in it
+    return "\n".join(kept) + ("\n\n</details>" if folded else "") + "\n" + tail
