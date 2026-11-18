@@ -29,7 +29,7 @@ wingbox:
     - >
       docker run --rm --user "$(id -u):$(id -g)" --env HOME=/tmp
       --volume "$CI_PROJECT_DIR:/repo:ro" --volume "$CI_PROJECT_DIR/wingbox-out:/ci/wingbox-out"
-      --env WINGBOX_ROOT=/work --env CI_PROJECT_DIR=/ci
+      --env WINGBOX_ROOT=/tmp/work --env CI_PROJECT_DIR=/ci
       --env WINGBOX_VERSION --env WINGBOX_ACTION_REF --env WINGBOX_HOPS --env WINGBOX_FAIL_ON
       --env WINGBOX_PATHS --env WINGBOX_BASE --env WINGBOX_HEAD --env WINGBOX_COMMENT --env WINGBOX_GITLAB_TOKEN
       --env CI_PIPELINE_SOURCE --env CI_COMMIT_SHA --env CI_COMMIT_BEFORE_SHA
@@ -39,9 +39,9 @@ wingbox:
       /tmp/venv/bin/python -m pip install --disable-pip-version-check --quiet "wingbox==$WINGBOX_VERSION";
       git clone --quiet https://github.com/aileron-tech/wingbox-action.git /tmp/action;
       git -C /tmp/action checkout --quiet "$WINGBOX_ACTION_REF";
-      git clone --quiet --no-checkout /repo /work;
-      git -C /work checkout --quiet --detach "$CI_COMMIT_SHA";
-      cd /work;
+      git clone --quiet --no-checkout /repo /tmp/work;
+      git -C /tmp/work checkout --quiet --detach "$CI_COMMIT_SHA";
+      cd /tmp/work;
       exec /tmp/venv/bin/python /tmp/action/wingbox_gitlab.py'
   artifacts:
     when: always

@@ -101,7 +101,7 @@ class HandOnTest(unittest.TestCase):
         text = (ROOT / "gitlab" / "wingbox-shell.gitlab-ci.yml").read_text(encoding="utf-8")
         self.assertNotIn("\n  image:", text)
         for needed in ('--user "$(id -u):$(id -g)"', '--volume "$CI_PROJECT_DIR:/repo:ro"', '--volume "$CI_PROJECT_DIR/wingbox-out:/ci/wingbox-out"',
-                       "--env WINGBOX_ROOT=/work", "--env CI_PROJECT_DIR=/ci", "git clone --quiet --no-checkout /repo /work"):
+                       "--env WINGBOX_ROOT=/tmp/work", "--env CI_PROJECT_DIR=/ci", "git clone --quiet --no-checkout /repo /tmp/work"):
             self.assertIn(needed, text)
         self.assertEqual(2, text.count("--volume "))
         wrapper = (ROOT / "wingbox_gitlab.py").read_text(encoding="utf-8")
