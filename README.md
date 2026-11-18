@@ -303,10 +303,6 @@ prints the report into the job log:
 | merge request | the merge request's diff base and its head commit |
 | push to the default branch | the commit before the push and the pushed commit |
 
-The note on a merge request (a one-line change inside a private function of a Rust project):
-
-![The Wingbox note on a GitLab merge request](docs/gitlab-merge-request-note.png)
-
 What it leaves:
 
 - `wingbox-out/wingbox-report.md` and `wingbox-out/wingbox-plan.sexp` (the review plan for an
