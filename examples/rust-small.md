@@ -1,8 +1,18 @@
 <!-- Wingbox Pull Request Check on a one-file commit of a public Rust project, replayed as a pull request against its parent, built locally with wingbox 0.10.1 and tools/replay.py; not posted anywhere. -->
 
-## Wingbox: what this pull request touches
+## Wingbox: 6 modules outside this pull request use what it changes
 
-**6** module(s) not changed by this pull request use a changed file directly; 1 more through a module facade or declaration; 6 within 2 hops. **0** new boundary finding(s). 1 changed file(s), 1 in the code graph.
+These modules use `src/infra/session_detail.rs`, which this pull request changes. They are not in the pull request, so a change in behaviour reaches them without showing in the diff:
+
+- `src/cli` uses `LoadSessionTimelineError`, `load_session_timeline`
+- `src/infra/claude` uses `LastAssistantOutput`
+- `src/infra/codex_fork` uses `load_session_timeline`
+- `src/infra/gemini` uses `LastAssistantOutput`
+- `src/infra/opencode` uses `load_session_timeline`
+- `src/main` uses `load_last_assistant_output`, `load_session_timeline`
+
+<details>
+<summary>More: the picture, 1 through a facade or declaration, 6 within 2 hops</summary>
 
 ### Blast radius
 
@@ -52,24 +62,13 @@ flowchart RL
 
 <sub>An arrow points from a module to what it uses. Thick border: changed in this pull request. Dashed: it reaches a changed file through a module facade, a declaration or within 2 hops.</sub>
 
-### Not changed, but uses what changed
-
-Directly:
-
-- `src/cli` uses `LoadSessionTimelineError`, `load_session_timeline` from `src/infra/session_detail.rs`
-- `src/infra/claude` uses `LastAssistantOutput` from `src/infra/session_detail.rs`
-- `src/infra/codex_fork` uses `load_session_timeline` from `src/infra/session_detail.rs`
-- `src/infra/gemini` uses `LastAssistantOutput` from `src/infra/session_detail.rs`
-- `src/infra/opencode` uses `load_session_timeline` from `src/infra/session_detail.rs`
-- `src/main` uses `load_last_assistant_output`, `load_session_timeline` from `src/infra/session_detail.rs`
-
 Through `src/infra/session_detail.rs` (a module facade or the declaration of the file): 1 module(s), by folder: `src/` 1. They see the change only if it alters an item they use.
 
 Within 2 hops, by folder: `src/infra/` 4, `src/` 1, `src/app/` 1.
 
-### Boundary findings introduced by this pull request
+</details>
 
-None.
+No new boundary finding.
 
 **Not checked**: part `.` (its style has no layers). No finding is reported there, and that is not a pass.
 

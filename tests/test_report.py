@@ -33,9 +33,10 @@ class UsesTest(unittest.TestCase):
     def test_a_direct_dependent_says_what_it_uses_from_the_changed_file(self) -> None:
         """/* REQ-ACTION-014: under "Directly" each dependent names what it uses from each changed file, from the facts: at most NAMES_LIMIT names and the number of the others, a member as `Type::name`, a macro as `name!`; a dependent whose fact has no names is listed with the file alone. */"""
         body = report.build_comment(rust())
-        self.assertIn("**6** module(s) not changed by this pull request use a changed file directly; 1 more through a module facade or declaration; 6 within 2 hops.", body)
-        self.assertIn("- `src/cli` uses `LoadSessionTimelineError`, `load_session_timeline` from `src/infra/session_detail.rs`\n", body)
-        self.assertIn("- `src/infra/claude` uses `LastAssistantOutput` from `src/infra/session_detail.rs`\n", body)
+        self.assertIn("## Wingbox: 6 modules outside this pull request use what it changes\n", body)
+        self.assertIn("<summary>More: the picture, 1 through a facade or declaration, 6 within 2 hops</summary>", body)
+        self.assertIn("- `src/cli` uses `LoadSessionTimelineError`, `load_session_timeline`\n", body)
+        self.assertIn("- `src/infra/claude` uses `LastAssistantOutput`\n", body)
         self.assertIn("Through `src/infra/session_detail.rs` (a module facade or the declaration of the file): 1 module(s), by folder: `src/` 1.", body)
         changed = (
             ChangedFile("src/app/state.rs", "src/app/state", (
@@ -60,7 +61,7 @@ class UsesTest(unittest.TestCase):
             ChangedFile("src/ui/theme.rs", "src/ui/theme", (Dependent("src/ui", 1, routes=names("ACCENT", "BAR_BG")),)),
         )
         body = report.build_comment(make(changed))
-        self.assertIn("**2** module(s) not changed by this pull request use a changed file directly; 1 more through a module facade or declaration.", body)
+        self.assertIn("## Wingbox: 2 modules outside this pull request use what it changes\n", body)
         self.assertIn("- `src/main` uses `AppCommand`, `AppData`, `AppError` and 19 more from `src/app/mod.rs`\n", body)
         self.assertIn("- `src/ui` uses `ACCENT`, `BAR_BG` from `src/ui/theme.rs`\n", body)
         self.assertIn("Through `src/app/mod.rs` (a module facade or the declaration of the file): 1 module(s), by folder: `src/` 1.", body)
@@ -69,7 +70,8 @@ class UsesTest(unittest.TestCase):
         """/* REQ-ACTION-014: a backtick or a line break in a name or a path is replaced, so it cannot end the code span or start a line of its own. */"""
         changed = (ChangedFile("src/a`b.ts", "src/a`b", (Dependent("src/x\ny", 1, routes=names("f`g")),)),)
         body = report.build_comment(make(changed))
-        self.assertIn("- `src/x y` uses `f'g` from `src/a'b.ts`\n", body)
+        self.assertIn("- `src/x y` uses `f'g`\n", body)
+        self.assertIn("This module uses `src/a'b.ts`, which this pull request changes.", body)
 
 
 class TestModulesTest(unittest.TestCase):
@@ -80,7 +82,9 @@ class TestModulesTest(unittest.TestCase):
         for module in ("src/order.service", "src/app.module", "src/latest", "lib/contest.io"):
             self.assertFalse(report.is_test(module), module)
         changed = (ChangedFile("src/order.ts", "src/order", (Dependent("src/order.spec", 1), Dependent("src/order.service", 1))),)
-        self.assertIn("**1** module(s) not changed by this pull request use a changed file directly; 1 test module(s).", report.build_comment(make(changed)))
+        body = report.build_comment(make(changed))
+        self.assertIn("## Wingbox: 1 module outside this pull request uses what it changes\n", body)
+        self.assertIn("<summary>More: the picture, 1 test module</summary>", body)
 
 
 class DiagramBlockTest(unittest.TestCase):
@@ -88,8 +92,9 @@ class DiagramBlockTest(unittest.TestCase):
         """/* REQ-ACTION-019: after the counts the comment has one ```mermaid block: the changed file, the direct dependents with a solid arrow to it, the module that only declares it and the farther ones dashed, each farther one linked to the module it is reached through; a legend line follows; a pull request without dependents, or without source changes, has no diagram. */"""
         body = report.build_comment(rust())
         self.assertEqual(1, body.count("```mermaid\n"))
-        self.assertLess(body.index("**6** module(s)"), body.index("### Blast radius"))
-        self.assertLess(body.index("### Blast radius"), body.index("### Not changed, but uses what changed"))
+        self.assertLess(body.index("- `src/cli` uses"), body.index("<details>"))
+        self.assertLess(body.index("<details>"), body.index("### Blast radius"))
+        self.assertLess(body.index("### Blast radius"), body.index("</details>"))
         block = body.split("```mermaid\n")[1].split("\n```\n")[0]
         self.assertIn('    c0["src/infra/session_detail.rs"]\n', block)
         self.assertIn('  subgraph g0["src/"]\n    m0("cli")\n    m1("main")\n    m2("app")\n    m3("infra")\n  end\n', block)
@@ -142,9 +147,10 @@ class SummaryTest(unittest.TestCase):
         comment, summary = report.build_comment(data), report.build_comment(data, full=True)
         self.assertIn("- ... and 5 more, by folder: `src/` 5 (the job summary lists them all)\n", comment)
         self.assertNotIn("`src/m14` uses", comment)
-        self.assertIn("- `src/m14` uses `item14` from `src/core.ts`\n", summary)
+        self.assertIn("- `src/m14` uses `item14`\n", summary)
         self.assertIn("- violation: `a11` -> `b`\n", summary)
-        self.assertNotIn("more", summary.split("### Not changed")[1])
+        self.assertNotIn("the job summary lists them all", summary)
+        self.assertNotIn("<details>", summary)
         self.assertEqual(comment.split("```mermaid\n")[1].split("\n```\n")[0], summary.split("```mermaid\n")[1].split("\n```\n")[0])
         self.assertEqual(comment.splitlines()[:4], summary.splitlines()[:4])
 
@@ -171,7 +177,7 @@ class CutTest(unittest.TestCase):
         cut = report.cut(body, report.COMMENT_LIMIT)
         self.assertLessEqual(len(cut.encode("utf-8")), report.COMMENT_LIMIT)
         self.assertGreater(len(cut), report.COMMENT_LIMIT - 12_000)
-        self.assertTrue(cut.startswith(facts.MARKER + "\n## Wingbox: what this pull request touches\n"))
+        self.assertTrue(cut.startswith(facts.MARKER + "\n## Wingbox: 9 modules outside this pull request use what it changes\n"))
         self.assertTrue(cut.endswith(body.splitlines()[-1] + "\n"))
         self.assertIn("\nThis comment was cut to fit GitHub's limit; the whole report is in the job summary of the workflow run.\n", cut)
         self.assertEqual(0, cut.count("```") % 2)

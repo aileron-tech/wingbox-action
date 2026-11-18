@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Changes
+
+- The comment says the thing first: a heading and a sentence with how many
+  modules outside the pull request use what it changes, then those modules.
+  When nothing outside the pull request uses the changed files and there is
+  no new finding, the comment is one sentence.
+- New boundary findings lead the comment and its heading; the empty "None."
+  section is gone ("No new boundary finding." in one line).
+- The diagram, the modules farther away, the tests and the files outside the
+  code graph are folded under one "More" line in the comment; the job summary
+  shows them unfolded.
+- A row no longer repeats the changed file when every listed module uses the
+  same one.
+
 ## 1.0.0 - 2026-11-18
 
 ### Changes

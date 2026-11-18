@@ -3,25 +3,38 @@
 See what your pull request touches before you merge.
 
 On every pull request this GitHub Action writes one comment that answers:
-which modules depend on the files you changed, but are not part of the pull
-request? Those are the places a change can break without showing up in the
-diff. You get:
+which modules use the files you changed, but are not part of the pull request?
+Those are the places a change can break without showing up in the diff. The
+comment says it in its first line:
 
-- **A list**: each module that uses a changed file directly, with what it
-  uses from it (`src/cli` uses `load_session_timeline` from
-  `src/infra/session_detail.rs`); the modules farther away and the tests are
-  counted by folder.
-- **A picture**: the same blast radius as a diagram inside the comment, the
-  changed files on one side, the modules that depend on them on the other.
-- **Boundary findings**: the layer, capability and pattern violations the
-  pull request introduces (the ones the base branch does not have).
+> **Wingbox: 6 modules outside this pull request use what it changes**
+>
+> These modules use `src/infra/session_detail.rs`, which this pull request
+> changes. They are not in the pull request, so a change in behaviour reaches
+> them without showing in the diff:
+>
+> - `src/cli` uses `LoadSessionTimelineError`, `load_session_timeline`
+> - `src/infra/claude` uses `LastAssistantOutput`
+> - ...
+
+You get:
+
+- **The modules to look at**: each module that uses a changed file directly,
+  with what it uses from it; when nothing outside the pull request uses the
+  changed files, the comment is one sentence.
+- **Boundary findings first**: the layer, capability and pattern violations the
+  pull request introduces (the ones the base branch does not have) lead the
+  comment and its heading.
+- **A picture and the rest, folded**: the blast radius as a diagram, the
+  modules farther away, the tests and the files outside the code graph sit
+  under one "More" line, so the comment stays short.
 - **What was not checked**, said as such, so that silence is never read as a
   pass.
 
 The comment is updated on each push, so a pull request never gets a second
-one. The same report goes to the job summary of the workflow run. A pull
-request that changes no source file outside the tests gets no comment; the job
-summary says so in one line.
+one. The same report goes to the job summary of the workflow run, unfolded and
+with every module listed. A pull request that changes no source file outside
+the tests gets no comment; the job summary says so in one line.
 
 The action uses [Wingbox](https://github.com/aileron-tech/wingbox), an
 open-source code graph that is built on the runner, and installs
@@ -76,13 +89,18 @@ flowchart RL
   class m2,m3,m4,m9,m10,m11,m12 far
 ```
 
-and the list under it starts:
+and the comment opens with the modules to look at:
 
-> Directly:
+> ## Wingbox: 6 modules outside this pull request use what it changes
 >
-> - `src/cli` uses `LoadSessionTimelineError`, `load_session_timeline` from `src/infra/session_detail.rs`
-> - `src/infra/claude` uses `LastAssistantOutput` from `src/infra/session_detail.rs`
-> - `src/infra/codex_fork` uses `load_session_timeline` from `src/infra/session_detail.rs`
+> These modules use `src/infra/session_detail.rs`, which this pull request changes. They are not in the pull request, so a change in behaviour reaches them without showing in the diff:
+>
+> - `src/cli` uses `LoadSessionTimelineError`, `load_session_timeline`
+> - `src/infra/claude` uses `LastAssistantOutput`
+> - `src/infra/codex_fork` uses `load_session_timeline`
+
+The picture is folded under the line "More: the picture, 1 through a facade or
+declaration, 6 within 2 hops".
 
 More examples, each the text the action would post, built locally and not
 posted anywhere: [a larger change in the same Rust project](examples/rust-large.md)
@@ -115,21 +133,30 @@ Free Pascal.
 
 ## Reading the comment
 
-- **Directly**: modules that import or use a changed file and are not changed
+- **The heading and the first sentence** say how many modules outside the pull
+  request use what it changes, and name the changed files they use. With new
+  boundary findings the heading names them first. When no module outside the
+  pull request uses a changed file directly and there is no new finding, the
+  comment is one sentence.
+- **New boundary findings**: findings of `wingbox boundaries` on the head that
+  the base does not have. Known findings (in a baseline) and type-only imports
+  are not counted. Without any, the comment says "No new boundary finding."
+- **The list**: modules that import or use a changed file and are not changed
   themselves. Where Wingbox follows a name to the file that defines it, the
-  line says which names (at most three, then a count). Wingbox 0.10.1 does
-  this for Rust; for the other languages the line names the changed file.
-- **Through a module facade or declaration**: modules that reach a changed
-  file only through the file that declares or re-exports it (`mod.rs`,
-  `lib.rs`, `__init__.py`, an `index.ts`) without naming an item of it. They
-  see the change only if it alters something they use, so they are counted,
-  not listed.
-- **Within N hops**: modules that depend on a direct dependent. Counted by
-  folder.
-- **Tests** that use the changed code are counted apart.
-- **Boundary findings introduced by this pull request**: findings of
-  `wingbox boundaries` on the head that the base does not have. Known findings
-  (in a baseline) and type-only imports are not counted.
+  row says which names (at most three, then a count). Wingbox 0.10.1 does
+  this for Rust; for the other languages the row names the module (and the
+  changed file, when the pull request changes several).
+- **More** (folded in the comment, open in the job summary):
+  - the diagram;
+  - **through a module facade or declaration**: modules that reach a changed
+    file only through the file that declares or re-exports it (`mod.rs`,
+    `lib.rs`, `__init__.py`, an `index.ts`) without naming an item of it.
+    They see the change only if it alters something they use, so they are
+    counted, not listed;
+  - **within N hops**: modules that depend on a direct dependent, counted by
+    folder;
+  - **tests** that use the changed code, counted apart;
+  - the changed files that are not in the code graph.
 - **Not checked**: the parts of the repository `wingbox boundaries` could not
   check (rules it cannot read, no layered style, too few files). No finding
   there is not a pass, and the comment says so.

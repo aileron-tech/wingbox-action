@@ -14,12 +14,13 @@ from pathlib import Path
 
 EXPECTED = (
     "<!-- wingbox-pull-request-report -->",
-    "**2** module(s) not changed by this pull request use a changed file directly.",
+    "## Wingbox: 2 modules outside this pull request use what it changes\n",
+    "These modules use `app/services/billing.py`, which this pull request changes.",
     "```mermaid\n",
     '    c0["app/services/billing.py"]\n',
     "  m0 --> c0\n  m1 --> c0\n",
-    "- `app/api/admin` uses `app/services/billing.py`\n",
-    "- `app/api/routes` uses `app/services/billing.py`\n",
+    "- `app/api/admin`\n",
+    "- `app/api/routes`\n",
     "Not in the code graph (1: documents, configuration or deleted files): `docs/notes.md`.",
     "**Not checked**: part `.`",
     "Built and checked on the runner; no code left it.",
