@@ -14,6 +14,14 @@ with its history. It builds the code graph of the head (and of the base, in a gi
   base has not: the findings the pull request introduces;
 - the parts `wingbox boundaries` could not check, said as such.
 
+Run by hand it checks a working directory before a commit:
+
+    python wingbox_pr.py --root DIR --base REF [--head REF] [--out DIR]
+
+With `--base` and no head the change is the base against the files of DIR as they are on disk,
+uncommitted and untracked ones included (git's ignore rules apply); no commit is made. The report
+and the plan go to `--out`.
+
 It writes the report to the job summary and, when asked, to one comment on the pull request that
 is updated on each push (found by its HTML marker). Standard library only; the only network use
 is the GitHub API for the comment (pip installs wingbox before this script runs). Wingbox writes
@@ -26,6 +34,7 @@ wingbox_diagram, all three pure.
 """
 from __future__ import annotations
 
+import argparse
 import dataclasses
 import hashlib
 import json
@@ -52,6 +61,9 @@ from wingbox_report import (  # noqa: E402,F401
     COMMENT_LIMIT, FACADE_FILES, FAIL_ON, FOLDER_LIMIT, LIST_LIMIT, MAP_ARTIFACT, SUMMARY_LIMIT, build_comment, build_plan,
     changed_tests, cut, exit_status, is_facade, is_parent, is_test, needs_comment, result, tests_to_run, untouched_count, uses,
 )
+
+# The head of a check of the working directory: the files as they are on disk, not a commit.
+WORKING_TREE = "working-tree"
 
 # Wingbox commands that ended abnormally in this run: the result is then UNKNOWN, never a pass.
 TOOL_ERRORS: list[str] = []
@@ -160,14 +172,23 @@ def changed_items(root: str, changed: ChangedFile, hunks: tuple[wingbox_changes.
 
 
 def collect(root: str, base: str, head: str, hops: int, patterns: list[str], version: str) -> Report:
-    """Build the graphs of head (root) and base (a worktree) and gather the report's data."""
-    names = [line for line in _git(root, "diff", "--name-only", f"{base}...{head}").splitlines() if line]
+    """Build the graphs of head (root) and base (a worktree) and gather the report's data.
+
+    head is a commit, or WORKING_TREE: then the change is the merge base of base and HEAD against the files of
+    root as they are on disk, uncommitted and untracked ones included, and nothing is committed."""
+    working = head == WORKING_TREE
+    merge_base = _git(root, "merge-base", base, "HEAD" if working else head).strip()
+    if working:
+        untracked = [line for line in _git(root, "ls-files", "--others", "--exclude-standard").splitlines() if line]
+        names = list(dict.fromkeys([line for line in _git(root, "diff", "--name-only", merge_base).splitlines() if line] + untracked))
+    else:
+        untracked = []
+        names = [line for line in _git(root, "diff", "--name-only", f"{base}...{head}").splitlines() if line]
     changed_paths, skipped = selected(names, patterns)
     head_lines = _boundaries(root)
     head_findings, not_checked = findings(head_lines)
     with tempfile.TemporaryDirectory() as tmp:
         worktree = os.path.join(tmp, "base")
-        merge_base = _git(root, "merge-base", base, head).strip()
         _git(root, "worktree", "add", "--detach", worktree, merge_base)
         try:
             base_findings, _ = findings(_boundaries(worktree))
@@ -182,7 +203,12 @@ def collect(root: str, base: str, head: str, hops: int, patterns: list[str], ver
         if module is not None:
             changed_modules.add(module)
         changed.append(ChangedFile(path, module, ()) if module is None else ChangedFile(path, module, tuple(found)))
-    hunks = wingbox_changes.hunks(_git(root, "diff", "-U0", "--no-color", "--no-ext-diff", f"{base}...{head}"))
+    hunks = wingbox_changes.hunks(_git(root, "diff", "-U0", "--no-color", "--no-ext-diff", merge_base if working else f"{base}...{head}"))
+    for path in untracked:
+        try:
+            hunks[path] = wingbox_changes.added_file((Path(root) / path).read_text(encoding="utf-8-sig", errors="replace"))
+        except OSError:
+            pass
     bent = changed_tests({c.path: (c.module, c.untouched) for c in changed}, hunks)   # untouched still holds every dependent here
     hashes = []
     for c in changed:
@@ -250,9 +276,26 @@ def _append(path: str, text: str) -> None:
         stream.write(text)
 
 
-def main() -> int:
+def settings(argv: list[str], env: Any, pull: dict[str, Any]) -> tuple[str, str, str, str]:
+    """(repository folder, base, head, output folder): a key of the command line before the environment
+    variable, before the pull request event, before the default. With `--base` given as a key and no head
+    anywhere, the head is the working directory."""
+    parser = argparse.ArgumentParser(prog="wingbox_pr.py", description="Check a pull request, or a working directory before a commit.")
+    parser.add_argument("--root", help="the repository to check (default: WINGBOX_ROOT, else the current directory)")
+    parser.add_argument("--base", help="the commit or branch to compare with")
+    parser.add_argument("--head", help="the commit to check (default with --base: the working directory as it is on disk)")
+    parser.add_argument("--out", help="the folder for wingbox-report.md and wingbox-plan.sexp")
+    args = parser.parse_args(argv)
+    root = args.root or env.get("WINGBOX_ROOT") or os.getcwd()
+    base = args.base or env.get("WINGBOX_BASE") or pull.get("base", {}).get("sha", "")
+    head = (args.head or env.get("WINGBOX_HEAD") or pull.get("head", {}).get("sha", "")
+            or (WORKING_TREE if args.base else "HEAD"))
+    out = args.out or env.get("RUNNER_TEMP") or tempfile.gettempdir()
+    return root, base, head, out
+
+
+def main(argv: Optional[list[str]] = None) -> int:
     env = os.environ
-    root = env.get("WINGBOX_ROOT") or os.getcwd()
     fail_on = env.get("WINGBOX_FAIL_ON", "none")
     if fail_on not in FAIL_ON:
         print(f"::error::fail-on must be one of {', '.join(FAIL_ON)}, not {fail_on!r}")
@@ -261,16 +304,16 @@ def main() -> int:
     if env.get("GITHUB_EVENT_PATH") and os.path.isfile(env["GITHUB_EVENT_PATH"]):
         event = json.loads(Path(env["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))
     pull = event.get("pull_request") or {}
-    base = env.get("WINGBOX_BASE") or pull.get("base", {}).get("sha", "")
-    head = env.get("WINGBOX_HEAD") or pull.get("head", {}).get("sha", "") or "HEAD"
+    root, base, head, temp = settings(sys.argv[1:] if argv is None else argv, env, pull)
+    root = os.path.abspath(root)
+    os.makedirs(temp, exist_ok=True)
     if not base:
-        print("::error::no base commit: run the action on pull_request, or give the base input")
+        print("::error::no base commit: run the action on pull_request, or give the base input (by hand: --base REF)")
         return 2
     if _run(["git", "cat-file", "-e", f"{base}^{{commit}}"], root).returncode != 0:
         print("::error::the base commit is not in the checkout: use actions/checkout with fetch-depth: 0")
         return 2
     patterns = [p.strip() for p in env.get("WINGBOX_PATHS", "").splitlines() if p.strip()]
-    temp = env.get("RUNNER_TEMP") or tempfile.gettempdir()
     upload_map = env.get("WINGBOX_UPLOAD_MAP", "false") == "true"
     report = collect(root, base, head, int(env.get("WINGBOX_HOPS", "2")), patterns, env.get("WINGBOX_VERSION", "?"))
     map_path = copy_map(root, temp) if upload_map else ""

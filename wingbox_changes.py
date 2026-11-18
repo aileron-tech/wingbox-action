@@ -83,6 +83,14 @@ def is_code(line: str, path: str) -> bool:
     return not (path.endswith(".php") and text.startswith("#") and not text.startswith("#["))
 
 
+def added_file(text: str) -> tuple[Hunk, ...]:
+    """The hunks of a file that is new as a whole (an untracked file): one hunk that adds every line."""
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return (Hunk(1, tuple(lines), ()),) if lines else ()
+
+
 def removes_code(changed: tuple["Hunk", ...], path: str) -> bool:
     """Whether the hunks of a file remove or replace a line of code (not only add lines, not only comments)."""
     return any(is_code(text, path) for hunk in changed for text in hunk.removed)
