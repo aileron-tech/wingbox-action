@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Changes
+
+- GitLab CI: `gitlab/wingbox.gitlab-ci.yml` (Docker and Kubernetes runners)
+  and `gitlab/wingbox-shell.gitlab-ci.yml` (shell runners: the check runs in
+  a container and writes only `wingbox-out/` on the runner) run the same
+  check for merge requests and for pushes to the default branch. The report goes to the job
+  log, to artifacts (`wingbox-out/`) and, with a project access token in
+  `WINGBOX_GITLAB_TOKEN`, to one note on the merge request that is updated on
+  each push. The result and the counts are handed to later jobs as `WINGBOX_`
+  variables.
+
+### Fixes
+
+- A `wingbox build` that fails (wingbox not installed for the Python that runs
+  the check, a locked project) is a tool error: the result is UNKNOWN and the
+  comment says the change could not be checked. It used to read as "no source
+  module changed; nothing to check".
+
 ## 1.2.0 - 2026-11-18
 
 ### Changes

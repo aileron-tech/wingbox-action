@@ -1,0 +1,225 @@
+"""The GitLab CI wrapper: which commits it compares, the merge request note, the variables it hands on."""
+import importlib.util
+import sys
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+_spec = importlib.util.spec_from_file_location("wingbox_gitlab", ROOT / "wingbox_gitlab.py")
+gitlab = importlib.util.module_from_spec(_spec)
+sys.modules["wingbox_gitlab"] = gitlab
+_spec.loader.exec_module(gitlab)
+
+ZERO = "0" * 40
+
+
+class CommitsTest(unittest.TestCase):
+    def test_a_merge_request_pipeline_compares_the_diff_base_with_the_commit(self) -> None:
+        """/* REQ-ACTION-060: in a merge request pipeline the base is CI_MERGE_REQUEST_DIFF_BASE_SHA and the head is CI_COMMIT_SHA */"""
+        env = {"CI_PIPELINE_SOURCE": "merge_request_event", "CI_MERGE_REQUEST_DIFF_BASE_SHA": "b" * 40, "CI_COMMIT_SHA": "c" * 40,
+               "CI_COMMIT_BEFORE_SHA": ZERO}
+        self.assertEqual(gitlab.Compare("b" * 40, "c" * 40), gitlab.commits(env))
+
+    def test_a_push_pipeline_compares_the_commit_before_the_push_with_the_commit(self) -> None:
+        """/* REQ-ACTION-061: in a push pipeline the base is CI_COMMIT_BEFORE_SHA; a first push of a branch (all zeros) and a pipeline without these variables are skipped with the reason said */"""
+        self.assertEqual(gitlab.Compare("a" * 40, "c" * 40),
+                         gitlab.commits({"CI_PIPELINE_SOURCE": "push", "CI_COMMIT_BEFORE_SHA": "a" * 40, "CI_COMMIT_SHA": "c" * 40}))
+        first = gitlab.commits({"CI_PIPELINE_SOURCE": "push", "CI_COMMIT_BEFORE_SHA": ZERO, "CI_COMMIT_SHA": "c" * 40})
+        self.assertIsInstance(first, gitlab.Skip)
+        self.assertIn("first push", first.reason)
+        self.assertIsInstance(gitlab.commits({}), gitlab.Skip)
+
+    def test_explicit_commits_win(self) -> None:
+        """/* REQ-ACTION-062: WINGBOX_BASE and WINGBOX_HEAD, when set, are the commits compared, whatever the pipeline */"""
+        env = {"WINGBOX_BASE": "1" * 40, "WINGBOX_HEAD": "2" * 40, "CI_PIPELINE_SOURCE": "push", "CI_COMMIT_BEFORE_SHA": "a" * 40,
+               "CI_COMMIT_SHA": "c" * 40}
+        self.assertEqual(gitlab.Compare("1" * 40, "2" * 40), gitlab.commits(env))
+
+
+class NoteTest(unittest.TestCase):
+    def _calls(self, pages: list[list[dict]]):
+        made: list[tuple[str, str, object]] = []
+
+        def call(method: str, url: str, body: object = None):
+            made.append((method, url, body))
+            if method == "GET":
+                page = int(url.rsplit("page=", 1)[1])
+                return pages[page - 1], (str(page + 1) if page < len(pages) else "")
+            return {"id": 77}, ""
+        return made, call
+
+    def test_the_note_with_the_marker_is_updated(self) -> None:
+        """/* REQ-ACTION-063: the merge request has one Wingbox note: the note that holds the marker is updated, also when it is on a later page of notes */"""
+        made, call = self._calls([[{"id": 1, "body": "hello"}], [{"id": 9, "body": gitlab.MARKER + "\nold"}]])
+        said = gitlab.post_note("new body", "https://gl.example/api/v4", "42", "7", call)
+        self.assertEqual("updated note 9", said)
+        self.assertEqual(("PUT", "https://gl.example/api/v4/projects/42/merge_requests/7/notes/9", {"body": "new body"}), made[-1])
+
+    def test_a_note_is_created_only_when_there_is_something_to_say(self) -> None:
+        """/* REQ-ACTION-064: with no Wingbox note yet, one is created when the report has something to say and none otherwise */"""
+        made, call = self._calls([[{"id": 1, "body": "hello"}]])
+        self.assertEqual("created note 77", gitlab.post_note("body", "https://gl.example/api/v4", "42", "7", call))
+        self.assertEqual("POST", made[-1][0])
+        made, call = self._calls([[]])
+        self.assertEqual("no note: no source module changed", gitlab.post_note("body", "https://gl.example/api/v4", "42", "7", call, create=False))
+        self.assertEqual(["GET"], [method for method, _, _ in made])
+
+    def test_a_project_path_is_encoded(self) -> None:
+        """/* REQ-ACTION-065: a project given by its path is written into the address with its slashes encoded */"""
+        made, call = self._calls([[]])
+        gitlab.post_note("body", "https://gl.example/api/v4", "group/sub/repo", "7", call)
+        self.assertIn("/projects/group%2Fsub%2Frepo/merge_requests/7/notes", made[0][1])
+
+
+class KeysTest(unittest.TestCase):
+    def test_keys_name_the_repository_the_commits_and_the_output_folder(self) -> None:
+        """/* REQ-ACTION-075: --root, --base, --head and --out name the repository, the two commits and the folder of the output, so the script runs from any current directory; a key wins over the variable of the same meaning, and without keys the variables stand */"""
+        env = {"WINGBOX_ROOT": "/from/env", "CI_PROJECT_DIR": "/ci", "WINGBOX_BASE": "e" * 40}
+        got = gitlab.with_keys(["--root", "/repo", "--base", "a" * 40, "--head", "b" * 40, "--out", "/out"], env)
+        self.assertEqual(("/repo", "a" * 40, "b" * 40, "/out"), (got["WINGBOX_ROOT"], got["WINGBOX_BASE"], got["WINGBOX_HEAD"], got["WINGBOX_OUT"]))
+        self.assertEqual(env, gitlab.with_keys([], env))
+        self.assertEqual("/ci", gitlab.with_keys(["--root", "/repo"], env)["CI_PROJECT_DIR"])
+        self.assertEqual("/repo/wingbox-out", str(gitlab.out_folder({"WINGBOX_ROOT": "/repo"}, "/repo")).replace("\\", "/"))
+        self.assertEqual("/ci/wingbox-out", str(gitlab.out_folder({"CI_PROJECT_DIR": "/ci"}, "/repo")).replace("\\", "/"))
+        self.assertEqual("/out", str(gitlab.out_folder({"CI_PROJECT_DIR": "/ci", "WINGBOX_OUT": "/out"}, "/repo")).replace("\\", "/"))
+
+
+class WordingTest(unittest.TestCase):
+    def test_gitlab_reads_merge_request(self) -> None:
+        """/* REQ-ACTION-074: in GitLab the report says "merge request" where the GitHub report says "pull request"; the marker that finds the note again and the lines of the plan are left as they are */"""
+        text = gitlab.MARKER + "\n## Wingbox: 2 items touched by this change are used by 5 modules outside this pull request\n\nThis pull request changes a test. Pull requests are listed.\n"
+        said = gitlab.in_gitlab_words(text)
+        self.assertTrue(said.startswith(gitlab.MARKER + "\n"))
+        self.assertIn("outside this merge request", said)
+        self.assertIn("This merge request changes a test. Merge requests are listed.", said)
+        self.assertNotIn("pull request", said.replace(gitlab.MARKER, ""))
+
+
+class HandOnTest(unittest.TestCase):
+    def test_the_results_are_written_as_variables_for_later_jobs(self) -> None:
+        """/* REQ-ACTION-066: the result, its reasons and the counts are written as a dotenv file with WINGBOX_ names a later job can read; a value keeps to one line */"""
+        text = gitlab.dotenv({"result": "UNKNOWN", "execution": "ok", "reasons": "not-checked: . (no-layer-style)", "tests-to-run": "3",
+                              "introduced-findings": "0", "untouched-dependents": "5", "not-checked-parts": "1"})
+        lines = text.splitlines()
+        self.assertIn("WINGBOX_RESULT=UNKNOWN", lines)
+        self.assertIn("WINGBOX_TESTS_TO_RUN=3", lines)
+        self.assertIn('WINGBOX_REASONS="not-checked: . (no-layer-style)"', lines)
+        self.assertEqual("WINGBOX_REASONS=\"a b\"\n", gitlab.dotenv({"reasons": "a\nb"}))
+
+    def test_the_template_runs_the_wrapper_on_merge_requests_and_the_default_branch(self) -> None:
+        """/* REQ-ACTION-067: the CI template fetches the whole history, installs the pinned wingbox release, runs wingbox_gitlab.py from a pinned tag of this repository, keeps the report as an artifact and runs on merge requests and on the default branch */"""
+        text = (ROOT / "gitlab" / "wingbox.gitlab-ci.yml").read_text(encoding="utf-8")
+        import re
+        action = (ROOT / "action.yml").read_text(encoding="utf-8")
+        default = re.search(r'version:\n(?:.*\n)*?\s+default: "([0-9.]+)"', action).group(1)
+        for name in ("wingbox.gitlab-ci.yml", "wingbox-shell.gitlab-ci.yml"):
+            text = (ROOT / "gitlab" / name).read_text(encoding="utf-8")
+            for needed in ('GIT_DEPTH: "0"', 'pip install', '"wingbox==$WINGBOX_VERSION"', "wingbox_gitlab.py", 'WINGBOX_ACTION_REF: "v1"',
+                           'checkout --quiet "$WINGBOX_ACTION_REF"', "merge_request_event", "$CI_DEFAULT_BRANCH", "wingbox-out/",
+                           "dotenv: wingbox-out/wingbox.env", f'WINGBOX_VERSION: "{default}"'):
+                self.assertIn(needed, text, name)
+
+    def test_the_shell_template_writes_nothing_on_the_runner_but_its_output_folder(self) -> None:
+        """/* REQ-ACTION-073: the template for shell runners runs the check in a container as the runner's user, with the checkout mounted read-only and wingbox-out/ as the only writable folder of the runner, works on a clone inside the container (WINGBOX_ROOT), and hands the container every variable the wrapper reads */"""
+        import re
+        text = (ROOT / "gitlab" / "wingbox-shell.gitlab-ci.yml").read_text(encoding="utf-8")
+        self.assertNotIn("\n  image:", text)
+        for needed in ('--user "$(id -u):$(id -g)"', '--volume "$CI_PROJECT_DIR:/repo:ro"', '--volume "$CI_PROJECT_DIR/wingbox-out:/ci/wingbox-out"',
+                       "--env WINGBOX_ROOT=/tmp/work", "--env CI_PROJECT_DIR=/ci", "clone --quiet --no-checkout /repo /tmp/work"):
+            self.assertIn(needed, text)
+        self.assertEqual(2, text.count("--volume "))
+        wrapper = (ROOT / "wingbox_gitlab.py").read_text(encoding="utf-8")
+        read = set(re.findall(r'env(?:\.get\(|\[)"((?:CI|WINGBOX)_[A-Z0-9_]+)"', wrapper)) | {gitlab.TOKEN_VARIABLE}
+        passed = set(re.findall(r"--env ((?:CI|WINGBOX)_[A-Z0-9_]+)", text))
+        # The output folder is fixed by the mount, and the repository is the clone made inside the container.
+        self.assertEqual(set(), read - passed - {"WINGBOX_OUT"})
+
+    def test_a_pipeline_with_nothing_to_compare_passes_and_says_so(self) -> None:
+        """/* REQ-ACTION-068: a pipeline with nothing to compare (the first push of a branch) ends with status 0, says why and still writes wingbox.env with the result NOT_APPLICABLE, so the job's dotenv report has its file */"""
+        import os
+        import subprocess
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            env = {key: value for key, value in os.environ.items() if not key.startswith(("CI_", "WINGBOX_", "GITHUB_"))}
+            env.update(CI_PROJECT_DIR=directory, CI_PIPELINE_SOURCE="push", CI_COMMIT_SHA="c" * 40, CI_COMMIT_BEFORE_SHA=ZERO)
+            done = subprocess.run([sys.executable, str(ROOT / "wingbox_gitlab.py")], cwd=directory, env=env, capture_output=True, text=True,
+                                  encoding="utf-8", timeout=60)
+            self.assertEqual(0, done.returncode, done.stderr)
+            self.assertIn("first push", done.stdout)
+            written = (Path(directory) / "wingbox-out" / "wingbox.env").read_text(encoding="utf-8")
+            self.assertIn("WINGBOX_RESULT=NOT_APPLICABLE", written)
+
+
+class BuildFailureTest(unittest.TestCase):
+    def test_a_build_that_fails_is_a_tool_error(self) -> None:
+        """/* REQ-ACTION-069: a `wingbox build` that does not end with status 0 (wingbox not installed for this Python, a locked or unreadable project) is recorded as a tool error, so the result is UNKNOWN and never "nothing to check"; `wingbox boundaries` may still end with 1 (it found violations) */"""
+        import subprocess
+        pr = gitlab.pr
+        answers = {"build": 1, "boundaries": 1}
+
+        def fake_run(argv: list[str], cwd: str):
+            command = argv[3] if argv[1:3] == ["-m", "wingbox"] else argv[0]
+            return subprocess.CompletedProcess(argv, answers.get(command, 0), "", "No module named wingbox")
+        real_run, pr._run = pr._run, fake_run
+        try:
+            del pr.TOOL_ERRORS[:]
+            pr._boundaries("/nowhere")
+            self.assertEqual(["wingbox build exited 1"], pr.TOOL_ERRORS)
+            answers["build"] = 0
+            del pr.TOOL_ERRORS[:]
+            pr._boundaries("/nowhere")
+            self.assertEqual([], pr.TOOL_ERRORS)
+        finally:
+            pr._run = real_run
+            del pr.TOOL_ERRORS[:]
+
+    def test_a_tool_error_is_said_in_the_comment(self) -> None:
+        """/* REQ-ACTION-070: when a wingbox command failed, the comment says the change could not be checked and names the error, instead of "nothing to check", and the pull request gets that comment */"""
+        import dataclasses
+        pr = gitlab.pr
+        report = dataclasses.replace(pr.Report("0.11.0", 2, "a" * 40, "b" * 40, (pr.ChangedFile("src/a.rs", None, ()),), (), 0, ()),
+                                     tool_errors=("wingbox build exited 1",))
+        comment = pr.build_comment(report)
+        self.assertNotIn("nothing to check", comment)
+        self.assertIn("could not check this change", comment)
+        self.assertIn("wingbox build exited 1", comment)
+        self.assertTrue(pr.needs_comment(report))
+        self.assertEqual("UNKNOWN", pr.result(report)[0])
+        quiet = dataclasses.replace(report, tool_errors=())
+        self.assertIn("nothing to check", pr.build_comment(quiet))
+        self.assertFalse(pr.needs_comment(quiet))
+
+    def test_a_failed_query_never_leaves_a_pass_in_the_text(self) -> None:
+        """/* REQ-ACTION-071: when a query failed after the build, the comment and the job summary keep the usual report under the sentence that the change could not be checked completely, and every result they print (the result line of the summary, the head of the plan) says UNKNOWN with execution error: no text of them says PASS */"""
+        import dataclasses
+        pr = gitlab.pr
+        user = pr.User("src/cli", "src/cli/mod.rs", 331, "call", 2)
+        item = pr.ChangedItem("load", "fn", 97, (user,), ())
+        changed = pr.ChangedFile("src/infra/detail.rs", "src/infra/detail", (), items=(item,))
+        report = dataclasses.replace(pr.Report("0.11.0", 2, "a" * 40, "b" * 40, (changed,), (), 0, ()),
+                                     tool_errors=("wingbox usages exited 70",))
+        for text in (pr.build_comment(report), pr.build_comment(report, full=True)):
+            self.assertIn("could not check this change", text)
+            self.assertIn("wingbox usages exited 70", text)
+            self.assertIn("load", text)
+            self.assertIn(":result UNKNOWN :execution error", text)
+            self.assertNotIn(":result PASS", text)
+            self.assertNotIn("**PASS**", text)
+            self.assertNotIn("execution ok", text)
+
+    def test_a_failed_build_prints_only_that_it_could_not_check(self) -> None:
+        """/* REQ-ACTION-072: when the build failed there is no graph, so the comment is only the sentence that the change could not be checked: no list made of empty answers under it */"""
+        import dataclasses
+        pr = gitlab.pr
+        changed = pr.ChangedFile("src/infra/detail.rs", "src/infra/detail", (), items=())
+        report = dataclasses.replace(pr.Report("0.11.0", 2, "a" * 40, "b" * 40, (changed,), (), 0, ()),
+                                     tool_errors=("wingbox build exited 1",))
+        comment = pr.build_comment(report)
+        self.assertIn("could not check this change", comment)
+        self.assertNotIn("not used outside", comment)
+        self.assertNotIn("review-plan", comment)
+        self.assertEqual(5, len(comment.split("\n")))
+
+
+if __name__ == "__main__":
+    unittest.main()
