@@ -1,4 +1,4 @@
-<!-- Wingbox Pull Request Check on a one-file commit of a public Rust project, replayed as a pull request against its parent, built locally with wingbox 0.10.1 and tools/replay.py; not posted anywhere. -->
+<!-- Wingbox Pull Request Check on a one-file commit of a public Rust project, replayed as a pull request against its parent, built locally with wingbox 0.11.0 and tools/replay.py; not posted anywhere. -->
 
 ## Wingbox: 2 items touched by this change are used by 4 modules outside this pull request
 
@@ -76,4 +76,23 @@ No new boundary finding.
 
 **Not checked**: part `.` (its style has no layers). No finding is reported there, and that is not a pass.
 
-<sub>[Wingbox](https://wingbox.dev) 0.10.2, base `70939f6`, head `cf6d8c8`. Built and checked on the runner, without a language model; no code left it.</sub>
+<details>
+<summary>Review plan for an agent</summary>
+
+```lisp
+(review-plan :schema 1 :result UNKNOWN :execution ok :base 70939f6 :head cf6d8c8 :wingbox "0.11.0" :hops 2)
+(reason "not-checked: . (no-layer-style)")
+(changed-item "src/infra/session_detail.rs" load_session_timeline :kind fn :line 97 :how calls :via (detect_log_format looks_like_claude_jsonl))
+(look "src/cli/mod.rs" 331 :module src/cli :why call :item load_session_timeline :places 2)
+(look "src/infra/codex_fork.rs" 375 :module src/infra/codex_fork :why call :item load_session_timeline :places 2)
+(look "src/infra/opencode.rs" 992 :module src/infra/opencode :why call :item load_session_timeline :places 1)
+(look "src/main.rs" 426 :module src/main :why call :item load_session_timeline :places 5)
+(changed-item "src/infra/session_detail.rs" load_last_assistant_output :kind fn :line 30 :how calls :via (detect_log_format looks_like_claude_jsonl))
+(look "src/main.rs" 1093 :module src/main :why call :item load_last_assistant_output :places 2)
+(not-checked "." :reason no-layer-style)
+(changed-file "src/infra/session_detail.rs" :sha256 e0ef5272f7b67ca65e372eb6da0b9ad8aa59054f043c9ee0bd40977bb5b60f26)
+```
+
+</details>
+
+<sub>[Wingbox](https://wingbox.dev) 0.11.0, base `70939f6`, head `cf6d8c8`. Built and checked on the runner, without a language model; no code left it.</sub>

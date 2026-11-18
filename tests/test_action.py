@@ -203,7 +203,7 @@ class FixtureTest(unittest.TestCase):
             done = subprocess.run([sys.executable, str(ROOT / "wingbox_pr.py")], cwd=repo, env=env, capture_output=True, text=True)
             self.assertEqual(0, done.returncode, done.stdout + done.stderr)
             self.assertRegex((temp / "output.txt").read_text(encoding="utf-8"), re.compile(r"^map=$", re.M))
-            self.assertEqual(["output.txt", "wingbox-report.md"], sorted(p.name for p in temp.iterdir()))
+            self.assertEqual(["output.txt", "wingbox-plan.sexp", "wingbox-report.md"], sorted(p.name for p in temp.iterdir()))
             self.assertNotIn("Interactive map", done.stdout)
 
 
