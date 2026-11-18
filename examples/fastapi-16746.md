@@ -1,8 +1,17 @@
 <!-- Wingbox Pull Request Check on fastapi/fastapi#16746 ("Add dependency concurrency limits with Depends(max_concurrency=...)"), base 5758a9c, head fc07dde, built locally with wingbox 0.10.1 and tools/replay.py; not posted anywhere. -->
 
-## Wingbox: what this pull request touches
+## Wingbox: 5 modules outside this pull request use what it changes
 
-**5** module(s) not changed by this pull request use a changed file directly; 1 more through a module facade or declaration; 371 within 2 hops; 279 test module(s). **0** new boundary finding(s). 9 changed file(s), 6 in the code graph.
+These modules use `fastapi/dependencies/models.py`, `fastapi/dependencies/utils.py` and 2 more, which this pull request changes. They are not in the pull request, so a change in behaviour reaches them without showing in the diff:
+
+- `fastapi/_compat/v2` uses `fastapi/params.py`
+- `fastapi/applications` uses `fastapi/params.py`
+- `fastapi/openapi/utils` uses `fastapi/dependencies/models.py`, `fastapi/dependencies/utils.py` and 1 more
+- `fastapi/routing` uses `fastapi/dependencies/models.py`, `fastapi/dependencies/utils.py` and 1 more
+- `fastapi/security/oauth2` uses `fastapi/param_functions.py`
+
+<details>
+<summary>More: the picture, 1 through a facade or declaration, 371 within 2 hops, 279 test modules, 3 files outside the code graph</summary>
 
 ### Blast radius
 
@@ -74,16 +83,6 @@ flowchart RL
 
 <sub>An arrow points from a module to what it uses. Thick border: changed in this pull request. Dashed: it reaches a changed file through a module facade, a declaration or within 2 hops. A box with a count stands for the modules of one folder.</sub>
 
-### Not changed, but uses what changed
-
-Directly:
-
-- `fastapi/_compat/v2` uses `fastapi/params.py`
-- `fastapi/applications` uses `fastapi/params.py`
-- `fastapi/openapi/utils` uses `fastapi/dependencies/models.py`, `fastapi/dependencies/utils.py` and 1 more
-- `fastapi/routing` uses `fastapi/dependencies/models.py`, `fastapi/dependencies/utils.py` and 1 more
-- `fastapi/security/oauth2` uses `fastapi/param_functions.py`
-
 Through `fastapi/param_functions.py` (a module facade or the declaration of the file): 1 module(s), by folder: `fastapi/` 1. They see the change only if it alters an item they use.
 
 Within 2 hops, by folder: `docs_src/query_params_str_validations/` 30, `docs_src/dependencies/` 29, `docs_src/custom_response/` 15, `docs_src/request_form_models/` 14, `docs_src/security/` 14, `docs_src/path_params_numeric_validations/` 12, 75 more folder(s).
@@ -92,9 +91,9 @@ Tests that use the changed code (279), by folder: `tests/` 217, `tests/test_requ
 
 Not in the code graph (3: documents, configuration or deleted files): `docs/en/docs/advanced/advanced-dependencies.md`, `fastapi/.agents/skills/fastapi/SKILL.md`, `fastapi/.agents/skills/fastapi/references/dependencies.md`.
 
-### Boundary findings introduced by this pull request
+</details>
 
-None.
+No new boundary finding.
 
 **Not checked**: part `.` (its style has no layers). No finding is reported there, and that is not a pass.
 
