@@ -128,6 +128,19 @@ class OrderTest(unittest.TestCase):
                 self.assertLess(body.index("</details>"), body.index(line))
 
 
+class FooterTest(unittest.TestCase):
+    def test_the_last_line_links_the_site_and_says_no_model_was_used(self) -> None:
+        """/* REQ-ACTION-033: the last line of every form of the comment (the report, the one sentence, the line for
+        a pull request with no source change) names Wingbox as a link to its site, the version and the two
+        commits, and says that the check ran on the runner without a language model and that no code left it. */"""
+        footer = ("<sub>[Wingbox](https://wingbox.dev) 0.10.1, base `aaaaaaa`, head `bbbbbbb`. "
+                  "Built and checked on the runner, without a language model; no code left it.</sub>")
+        for changed in (ONE_FILE, (ChangedFile("src/leaf.ts", "src/leaf", ()),), (ChangedFile("README.md", None),)):
+            for full in (False, True):
+                lines = [line for line in report.build_comment(make(changed), full=full).split("\n") if line]
+                self.assertEqual(footer, lines[-1])
+
+
 class CutTest(unittest.TestCase):
     def test_a_cut_comment_closes_its_folded_block(self) -> None:
         """/* REQ-ACTION-032: a comment cut to the size limit inside the folded block closes the block before the
@@ -135,8 +148,13 @@ class CutTest(unittest.TestCase):
         many = tuple(Dependent(f"pkg{index:03d}/sub/mod", 2, through="src/mid") for index in range(400))
         body = report.build_comment(make((ChangedFile("src/core.py", "src/core", (Dependent("src/a", 1),) + many),)))
         self.assertIn("<details>", body)
-        limit = body.index("Within 2 hops") + 40
+        legend = next(line for line in body.split("\n") if line.startswith("<sub>An arrow"))
+        footer = [line for line in body.split("\n") if line][-1]
+        kept = body[:body.index(legend) + len(legend)]                       # up to the legend under the diagram
+        limit = len((kept + "\n\n</details>\n\n" + report.CUT_NOTICE + "\n\n" + footer + "\n").encode("utf-8")) + 8
+        self.assertLess(limit, len(body.encode("utf-8")))
         short = report.cut(body, limit)
+        self.assertIn(legend, short)
         self.assertLessEqual(len(short.encode("utf-8")), limit)
         self.assertEqual(short.count("<details>"), short.count("</details>"))
         self.assertLess(short.index("</details>"), short.index(report.CUT_NOTICE))

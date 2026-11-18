@@ -97,4 +97,4 @@ No new boundary finding.
 
 **Not checked**: part `.` (its style has no layers). No finding is reported there, and that is not a pass.
 
-<sub>Wingbox 0.10.1, base `5758a9c`, head `fc07dde`. Built and checked on the runner; no code left it.</sub>
+<sub>[Wingbox](https://wingbox.dev) 0.10.1, base `5758a9c`, head `fc07dde`. Built and checked on the runner, without a language model; no code left it.</sub>

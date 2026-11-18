@@ -102,7 +102,7 @@ class CommentTest(unittest.TestCase):
         self.assertIn('- violation: `src/dtos/order.dto` -> `src/services/order.service` (domain -> service)', body)
         self.assertIn("- capability-violation: `src/services/order.service.ts:2` uses db-client in layer service", body)
         self.assertIn("**Not checked**: part `web` (its declared rules could not be read). No finding is reported there, and that is not a pass.", body)
-        self.assertIn("Wingbox 0.7.2, base `aaaaaaa`, head `bbbbbbb`", body)
+        self.assertIn("[Wingbox](https://wingbox.dev) 0.7.2, base `aaaaaaa`, head `bbbbbbb`", body)
 
     def test_a_clean_pull_request_says_none_and_long_lists_are_cut(self) -> None:
         """/* REQ-ACTION-005: the comment leads with the counts; it names at most LIST_LIMIT direct dependents (each module once, with the changed files it uses) and counts the rest by folder; farther dependents are counted by folder and tests apart; a clean pull request says Nothing and None; a pull request that changes no source module outside the tests gets one line, and the action creates no comment for it (it only updates one it wrote before). */"""

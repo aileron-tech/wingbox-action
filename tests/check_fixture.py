@@ -23,7 +23,8 @@ EXPECTED = (
     "- `app/api/routes`\n",
     "Not in the code graph (1: documents, configuration or deleted files): `docs/notes.md`.",
     "**Not checked**: part `.`",
-    "Built and checked on the runner; no code left it.",
+    "<sub>[Wingbox](https://wingbox.dev) ",
+    "Built and checked on the runner, without a language model; no code left it.",
 )
 
 

@@ -216,6 +216,9 @@ then writes no comment, warns, and keeps the report in the job summary.
 
 ## What it never does
 
+- **No language model.** The comment is computed: parsers build the code
+  graph and the report is read from it. There is no model call, no API key
+  and no prompt, so the same pull request gives the same comment.
 - **No code leaves the runner.** The code graph is built and queried on the
   runner. The action makes two kinds of network calls: `pip` installs wingbox
   from PyPI, and the GitHub API reads the comments of the pull request and
