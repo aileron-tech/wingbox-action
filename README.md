@@ -7,14 +7,14 @@ which modules use the files you changed, but are not part of the pull request?
 Those are the places a change can break without showing up in the diff. The
 comment says it in its first line:
 
-> **Wingbox: 6 modules outside this pull request use what it changes**
+> **Wingbox: 2 items touched by this change are used by 4 modules outside this pull request**
 >
-> These modules use `src/infra/session_detail.rs`, which this pull request
-> changes. They are not in the pull request, so a change in behaviour reaches
-> them without showing in the diff:
+> `load_session_timeline` (function, `src/infra/session_detail.rs:97`) calls
+> `detect_log_format`, which calls `looks_like_claude_jsonl`, which changed.
+> These modules use it and are not in the pull request:
 >
-> - `src/cli` uses `LoadSessionTimelineError`, `load_session_timeline`
-> - `src/infra/claude` uses `LastAssistantOutput`
+> - `src/cli` calls it at `src/cli/mod.rs:331` and in 1 more place
+> - `src/infra/opencode` calls it at `src/infra/opencode.rs:992`
 > - ...
 
 You get:
@@ -92,18 +92,21 @@ flowchart RL
   class m2,m3,m4,m9,m10,m11,m12 far
 ```
 
-and the comment opens with the modules to look at:
+and the comment opens with what changed and who uses it (the commit changes
+one private function, `looks_like_claude_jsonl`):
 
-> ## Wingbox: 6 modules outside this pull request use what it changes
+> ## Wingbox: 2 items touched by this change are used by 4 modules outside this pull request
 >
-> These modules use `src/infra/session_detail.rs`, which this pull request changes. They are not in the pull request, so a change in behaviour reaches them without showing in the diff:
+> `load_session_timeline` (function, `src/infra/session_detail.rs:97`) calls `detect_log_format`, which calls `looks_like_claude_jsonl`, which changed. These modules use it and are not in the pull request:
 >
-> - `src/cli` uses `LoadSessionTimelineError`, `load_session_timeline`
-> - `src/infra/claude` uses `LastAssistantOutput`
-> - `src/infra/codex_fork` uses `load_session_timeline`
+> - `src/cli` calls it at `src/cli/mod.rs:331` and in 1 more place
+> - `src/infra/codex_fork` calls it at `src/infra/codex_fork.rs:375` and in 1 more place
+> - `src/infra/opencode` calls it at `src/infra/opencode.rs:992`
+> - `src/main` calls it at `src/main.rs:426` and in 4 more places
 
-The picture is folded under the line "More: the picture, 1 through a facade or
-declaration, 6 within 2 hops".
+The picture is folded under the line "More: the picture, 2 modules that use the
+changed files but not what changed, 1 through a facade or declaration, 6 within
+2 hops".
 
 More examples, each the text the action would post, built locally and not
 posted anywhere: [a larger change in the same Rust project](examples/rust-large.md)
