@@ -68,14 +68,16 @@ class HeadlineTest(unittest.TestCase):
 
     def test_nothing_to_say_is_one_sentence(self) -> None:
         """/* REQ-ACTION-028: when no module outside the pull request uses a changed file directly and the pull
-        request adds no boundary finding, the comment has no heading and no list: one sentence says so. What
-        reaches the files farther away stays available, folded. */"""
-        leaf = report.build_comment(make((ChangedFile("src/leaf.ts", "src/leaf", ()),)))
+        request adds no boundary finding, the comment has no heading and no list above its verdicts: one sentence
+        says so. What reaches the files farther away stays available, folded. The verdicts follow, one line each. */"""
+        whole = report.build_comment(make((ChangedFile("src/leaf.ts", "src/leaf", ()),)))
+        leaf, verdicts = whole.split("### Verdicts\n")
         self.assertNotIn("## ", leaf)
         self.assertNotIn("\n- ", leaf)
-        self.assertNotIn("<details>", leaf)
+        self.assertNotIn("<details>", whole)
+        self.assertEqual(6, verdicts.count("\n- "))
         self.assertIn("**Wingbox**: no module outside this pull request uses the files it changes directly, and it adds no boundary finding.", leaf)
-        far = report.build_comment(make((ChangedFile("src/core.py", "src/core", (Dependent("src/far/b", 2, through="src/mid"),)),)))
+        far = report.build_comment(make((ChangedFile("src/core.py", "src/core", (Dependent("src/far/b", 2, through="src/mid"),)),))).split("### Verdicts\n")[0]
         self.assertNotIn("## ", far)
         self.assertIn("**Wingbox**: no module outside this pull request uses the files it changes directly, and it adds no boundary finding.", far)
         self.assertIn("<summary>More: 1 within 2 hops</summary>", far)

@@ -1,5 +1,44 @@
 # Log
 
+## 2026-11-19: separate verdicts and `eligible` (issue #19)
+
+What changed
+
+- `wingbox_verdicts.py` (new, pure): `existing` (PRESENT, NONE, UNKNOWN with the number and the first),
+  `baseline` (ACCEPTED, EXPIRED, NONE, UNKNOWN with the numbers), `eligible` with its reasons, `record` (the
+  objects `boundaries`, `baseline`, `eligible`, `eligible-reasons`), `lines` (the six lines of the report),
+  `holds_violation`. The result of the boundary check and the word for the test evidence are arguments: the
+  module does not own them.
+- `wingbox_facts`: `accepted` (the breaks a baseline accepts, as findings with their terms; `known` reads
+  from it), `expired` (violations with `:expired`), `existing` (the findings of the head that the base has
+  too; one only the change's own policy edit hides stays, unless a complete entry accepts it).
+  `Report.existing`, `accepted`, `expired`.
+- `wingbox_report`: `FAIL_ON` gains `existing`; `exit_status`; the block "Verdicts" before the plan in the
+  comment and the summary; the outputs `eligible`, `existing-violations`, `baseline-accepted`,
+  `baseline-expired`. The test verdict is `tests_summary(report)`, which lives in this module since #28.
+- `wingbox_pr.fail_on_status` says why `existing` failed; both entry scripts use it.
+- `wingbox_evidence.build_evidence` adds the verdict objects; the schema of version 2 describes them.
+- Tests REQ-ACTION-160..168 (`tests/test_verdicts.py`).
+
+Why
+
+- Issue #19: a head with a violation from before, with accepted breaks and without any test evidence read
+  PASS, and neither the report nor the record held the word violation.
+
+Expectations of existing tests that changed with the behaviour
+
+- REQ-ACTION-028: the comment of a change nothing uses is one sentence above its verdicts; it was one
+  sentence alone. The six verdict lines are the issue's request.
+
+Not done
+
+- The plan has no verdict lines: its `review-plan` line carries the result as before.
+- The comment of a failed build stays the one sentence that says so, without verdict lines; the record of
+  that run has them (UNKNOWN).
+- A baseline entry without an end date does not make a record ineligible; it is counted
+  (`without-end-date`).
+- A change of a policy file does not by itself make a record ineligible; `policy` holds it.
+
 ## 2026-11-19: the coverage of a run in the evidence record (issue #21)
 
 What changed

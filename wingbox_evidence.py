@@ -16,6 +16,7 @@ from typing import Optional
 import wingbox_coverage
 import wingbox_policy
 import wingbox_tests
+import wingbox_verdicts
 from wingbox_facts import Report
 from wingbox_report import required_evidence, result, test_evidence, tests_summary, tests_to_run, untouched_count  # noqa: F401
 
@@ -67,6 +68,7 @@ def build_evidence(report: Report, run: Run, documents: dict[str, str]) -> dict[
         "result": {"boundaries": outcome, "execution": execution, "reasons": list(reasons)},
         "policy": wingbox_policy.record(report),
         "coverage": wingbox_coverage.record(report, run.repository),
+        **wingbox_verdicts.record(report, (outcome, execution, reasons), tests_summary(report)),
         "counts": {"changed-files": len(report.changed), "untouched-dependents": untouched_count(report),
                    "introduced-findings": len(report.introduced), "not-checked-parts": len(report.not_checked),
                    "tests-to-run": len(tests_to_run(report))},

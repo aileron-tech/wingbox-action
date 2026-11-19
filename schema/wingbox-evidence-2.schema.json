@@ -5,7 +5,7 @@
   "description": "What one run of the Wingbox pull request check looked at and found. Written as wingbox-evidence.json beside the report and the review plan.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "generated", "tool", "run", "subject", "result", "policy", "coverage", "counts", "files", "tests", "documents"],
+  "required": ["schema", "generated", "tool", "run", "subject", "result", "boundaries", "baseline", "eligible", "eligible-reasons", "policy", "coverage", "counts", "files", "tests", "documents"],
   "properties": {
     "schema": {"type": "string", "enum": ["wingbox-evidence/2"]},
     "generated": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$", "description": "UTC time the record was written."},
@@ -55,6 +55,75 @@
         "reasons": {"type": "array", "items": {"type": "string"}}
       }
     },
+    "boundaries": {
+      "type": "object",
+      "description": "The two verdicts on the boundary rules, kept apart: what the change introduces, and what the head holds that the base has too.",
+      "additionalProperties": false,
+      "required": ["introduced", "existing"],
+      "properties": {
+        "introduced": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["verdict", "findings", "violations", "reasons"],
+          "properties": {
+            "verdict": {"type": "string", "enum": ["PASS", "FAIL", "UNKNOWN", "NOT_APPLICABLE"], "description": "The result of the boundary check, as result.boundaries."},
+            "findings": {"type": "integer"},
+            "violations": {"type": "integer", "description": "The introduced findings that are violations, not candidates."},
+            "reasons": {"type": "array", "items": {"type": "string"}}
+          }
+        },
+        "existing": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["verdict", "violations", "first"],
+          "properties": {
+            "verdict": {"type": "string", "enum": ["NONE", "PRESENT", "UNKNOWN"], "description": "PRESENT: the head holds violations that the base has too. NONE: it holds none and everything was checked. UNKNOWN: none was found, but not everything was checked."},
+            "violations": {"type": "integer"},
+            "first": {"type": "string", "description": "The first of them; empty when there is none."}
+          }
+        }
+      }
+    },
+    "baseline": {
+      "type": "object",
+      "description": "The breaks of the rules the baseline of the head accepts.",
+      "additionalProperties": false,
+      "required": ["verdict", "accepted", "expired", "without-end-date", "entries", "past"],
+      "properties": {
+        "verdict": {"type": "string", "enum": ["NONE", "ACCEPTED", "EXPIRED", "UNKNOWN"], "description": "EXPIRED: an entry is past its end date and its break is a violation again. ACCEPTED: breaks are accepted, all within their terms. NONE: none is accepted. UNKNOWN: the boundaries could not be read."},
+        "accepted": {"type": "integer"},
+        "expired": {"type": "integer"},
+        "without-end-date": {"type": "integer", "description": "Accepted breaks whose entry states no end date."},
+        "entries": {"type": "array", "description": "The accepted breaks with the terms of their entries, at most 100.", "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["finding", "text", "file", "owner", "reason", "expires"],
+            "properties": {
+              "finding": {"type": "string"},
+              "text": {"type": "string"},
+              "file": {"type": "string", "description": "The baseline file that lists the break; empty for an entry past its end date."},
+              "owner": {"type": "string"},
+              "reason": {"type": "string"},
+              "expires": {"type": "string", "description": "The last day the entry holds, YYYY-MM-DD; empty when it states none."}
+            }
+          }},
+        "past": {"type": "array", "description": "The breaks whose entry is past its end date.", "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["finding", "text", "file", "owner", "reason", "expires"],
+            "properties": {
+              "finding": {"type": "string"},
+              "text": {"type": "string"},
+              "file": {"type": "string", "description": "The baseline file that lists the break; empty for an entry past its end date."},
+              "owner": {"type": "string"},
+              "reason": {"type": "string"},
+              "expires": {"type": "string", "description": "The last day the entry holds, YYYY-MM-DD; empty when it states none."}
+            }
+          }}
+      }
+    },
+    "eligible": {"type": "boolean", "description": "Whether the record is fit to count as evidence: no verdict is failed, unknown, incomplete or expired."},
+    "eligible-reasons": {"type": "array", "items": {"type": "string"}, "description": "Why it is not; empty when it is."},
     "policy": {
       "type": "object",
       "description": "The files the check is judged by that the change edits. The findings are judged with these files as the base has them.",

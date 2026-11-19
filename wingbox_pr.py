@@ -60,10 +60,11 @@ import wingbox_coverage  # noqa: E402
 import wingbox_evidence  # noqa: E402
 import wingbox_policy  # noqa: E402
 import wingbox_tests  # noqa: E402
+import wingbox_verdicts  # noqa: E402
 from wingbox_facts import (  # noqa: E402,F401
     BLOCKING_HEADS, FINDING_HEADS, MARKER, WORKING_TREE, ChangedFile, ChangedItem, Dependent, Finding, Item, NotChecked, Report, Route, Scan,
-    Site, Tree, User, checked_modules, dependents, findings, folder_of, go_functions, introduced, items, judged, known, module_of, parse_line,
-    parse_route, relation, selected, untouched, use_sites, users,
+    Site, Tree, User, accepted, checked_modules, dependents, existing, expired, findings, folder_of, go_functions, introduced, items, judged,
+    known, module_of, parse_line, parse_route, relation, selected, untouched, use_sites, users,
 )
 from wingbox_report import (  # noqa: E402,F401
     COMMENT_LIMIT, FACADE_FILES, FAIL_ON, FOLDER_LIMIT, LIST_LIMIT, MAP_ARTIFACT, SUMMARY_LIMIT, build_comment, build_plan,
@@ -404,6 +405,7 @@ def collect(root: str, base: str, head: str, hops: int, patterns: list[str], ver
                 if os.path.isdir(worktree):
                     _remove_worktree(root, worktree)
     new, own, resolved = judged(base_findings, head_findings, with_base_policy, known(head_lines))
+    before = existing(base_findings, head_findings, with_base_policy, known(head_lines))
     entries = wingbox_policy.new_entries(*texts[wingbox_policy.BASELINE]) if wingbox_policy.BASELINE in texts else ()
     changed_modules = {module_of(path) for path in changed_paths}
     changed: list[ChangedFile] = []
@@ -445,7 +447,8 @@ def collect(root: str, base: str, head: str, hops: int, patterns: list[str], ver
                   tests_changed=bent, tool_errors=tuple(dict.fromkeys(TOOL_ERRORS)), hashes=tuple(hashes),
                   checked_modules=checked_modules(head_lines), skipped_languages=tuple(sorted(SKIPPED_LANGUAGES.items())), tree=tree,
                   policy=policy, policy_base=judging if policy else "", self_accepted=tuple(own), baseline_entries=entries,
-                  tests_deleted=tests_deleted, scan=_scan(root, head_lines, patterns, tree.commit))
+                  tests_deleted=tests_deleted, scan=_scan(root, head_lines, patterns, tree.commit), existing=tuple(before),
+                  accepted=tuple(accepted(head_lines)), expired=tuple(expired(head_lines)))
 
 
 def utc(seconds: float) -> str:
@@ -710,6 +713,17 @@ def tests_failed(report: Report, env: Any, say: Callable[[str], None] = print) -
     return status
 
 
+def fail_on_status(report: Report, fail_on: str) -> int:
+    """The exit status `fail-on` gives the run; with `existing` the reason is said, because the result of the
+    boundary check may be PASS all the same."""
+    status = exit_status(report, fail_on)
+    if status and fail_on == "existing":
+        count = wingbox_verdicts.holds_violation(report)
+        print(f"Wingbox: fail-on existing: the head holds {count} violation{'' if count == 1 else 's'} of the boundary rules "
+              f"({len(report.existing)} there before this change)")
+    return status
+
+
 def policy_mode(env: Any, fail_on: str) -> Optional[str]:
     """`policy-change` of the job: WINGBOX_POLICY_CHANGE, or without it `fail` with `fail-on: strict` and
     `report` otherwise; None for a value that is neither."""
@@ -859,7 +873,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         except (urllib.error.URLError, KeyError, ValueError) as error:
             # A pull request from a fork gets a read-only token: the summary still holds the report.
             print(f"::warning::could not write the pull request comment ({error}); the report is in the job summary")
-    return max(exit_status(report, fail_on), tests_failed(report, env), policy_failed(report))
+    return max(fail_on_status(report, fail_on), tests_failed(report, env), policy_failed(report))
 
 
 if __name__ == "__main__":

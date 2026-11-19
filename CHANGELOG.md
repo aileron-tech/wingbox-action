@@ -106,6 +106,24 @@
   older one is asked as before). The result of the boundary check does not
   change: files outside every part, which only strict mode names, are in
   `coverage.parts` and not among the parts not checked.
+- Separate verdicts, never folded into one
+  ([#19](https://github.com/aileron-tech/wingbox-action/issues/19)). The
+  comment and the job summary end with "Verdicts", one line each, always in
+  this order: boundaries introduced by the change (the result), boundaries
+  there before it (the violations the head holds that the base has too, with
+  their number and the first), the baseline (accepted breaks, entries past
+  their end date), the tests, the coverage, and whether the record is
+  eligible as evidence. The record holds the same as `boundaries.introduced`,
+  `boundaries.existing`, `baseline` (each accepted entry with owner, reason
+  and end date), `eligible` and `eligible-reasons`. A record is eligible only
+  when no verdict is failed, unknown, incomplete or expired; test evidence
+  other than `complete` is a reason (`tests: none-found` among them).
+- New `fail-on` value `existing`: fail when the head holds a violation, one
+  the pull request introduces or one that was there before. `strict` keeps
+  its meaning and fails on nothing new. Outputs `eligible`,
+  `existing-violations`, `baseline-accepted`, `baseline-expired`.
+- A comment that was one sentence now has the six verdict lines under it.
+- Schema version 1 of the record is superseded by version 2.
 
 ### Fixes
 

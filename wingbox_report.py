@@ -19,11 +19,12 @@ import wingbox_changes as changes
 import wingbox_coverage as coverage
 import wingbox_diagram as diagram
 import wingbox_tests
+import wingbox_verdicts as verdicts
 from wingbox_facts import (BLOCKING_HEADS, MARKER, WORKING_TREE, Acceptance, ChangedFile, ChangedItem, Dependent, Finding, Report, Tree, User,
                            folder_of, module_of)
 from wingbox_facts import tree_reasons as _tree_reasons
 
-FAIL_ON = ("none", "violations", "not-checked", "strict")
+FAIL_ON = ("none", "violations", "not-checked", "strict", "existing")
 LIST_LIMIT = 10    # direct dependents and findings named in the comment; the job summary names them all
 ITEM_LIMIT = 5     # changed items the comment gives a block to; the job summary gives every one a block
 TESTS_LIMIT = 5    # test files named in the comment; the job summary names them all
@@ -163,7 +164,10 @@ def result(report: Report) -> tuple[str, str, tuple[str, ...]]:
 
 
 def exit_status(report: Report, fail_on: str) -> int:
-    """1 when the fail-on condition holds, else 0. strict: everything but PASS and NOT_APPLICABLE fails."""
+    """1 when the fail-on condition holds, else 0. strict: everything but PASS and NOT_APPLICABLE fails.
+    existing: the head holds a violation, one the change introduces or one that was there before."""
+    if fail_on == "existing" and verdicts.holds_violation(report):
+        return 1
     if fail_on == "violations" and any(f.head in BLOCKING_HEADS for f in report.introduced):
         return 1
     if fail_on == "not-checked" and report.not_checked:
@@ -426,6 +430,9 @@ def outputs(report: Report) -> dict[str, str]:
             "untouched-dependents": str(untouched_count(report)), "introduced-findings": str(len(report.introduced)),
             "not-checked-parts": str(len(report.not_checked)), "policy-changed": str(len(report.policy)),
             "coverage-complete": "true" if coverage.complete(report) else "false",
+            "existing-violations": str(verdicts.existing(report)[1]), "baseline-accepted": str(len(report.accepted)),
+            "baseline-expired": str(len(report.expired)),
+            "eligible": "true" if verdicts.eligible(report, outcome, tests_summary(report))[0] else "false",
             "tests-to-run": str(len(tests_to_run(report))),
             "tests-passed": passed, "tests-failed": failed, "tests-without-record": without,
             "tests-evidence": tests_summary(report), "tests-required": str(len(report.required_tests)),
@@ -918,6 +925,8 @@ def build_comment(report: Report, full: bool = False) -> str:
         lines += [f"{len(report.skipped)} changed file(s) left out by the `paths` filter.", ""]
     if report.map_run:
         lines += [f"Interactive map: the artifact `{MAP_ARTIFACT}` of [this workflow run]({report.map_run}).", ""]
+    # One line per verdict, always the same six in the same order: none is folded into another.
+    lines += ["### Verdicts", "", *verdicts.lines(report, result(report), tests_summary(report)), ""]
     plan = build_plan(report).split("\n")
     if full:
         outcome, execution, reasons = result(report)

@@ -242,6 +242,9 @@ class Report:
     baseline_entries: tuple[BaselineEntry, ...] = field(default=())  # the baseline entries the change adds or changes
     tests_deleted: tuple[tuple[str, str], ...] = field(default=())   # (deleted test file, changed source file it used on the base)
     scan: Optional[Scan] = None                                      # what the graph took in and left out; None when not looked at
+    existing: tuple[Finding, ...] = field(default=())                # findings the head holds that the base has too
+    accepted: tuple[Finding, ...] = field(default=())                # the breaks the head's baseline accepts, with the terms of each entry
+    expired: tuple[Finding, ...] = field(default=())                 # violations whose baseline entry is past its end date
 
 
 def tree_reasons(report: Report) -> tuple[str, ...]:
@@ -468,10 +471,11 @@ def findings(lines: list[str]) -> tuple[list[Finding], list[NotChecked]]:
     return found, not_checked
 
 
-def known(lines: list[str]) -> dict[tuple[str, ...], Acceptance]:
-    """The breaks a baseline accepts in the output of `wingbox boundaries`, by the key of the finding each
-    hides, with the terms its entry states (Wingbox 0.13 prints them; before that an entry has none)."""
-    found: dict[tuple[str, ...], Acceptance] = {}
+def accepted(lines: list[str]) -> list[Finding]:
+    """The breaks a baseline accepts in the output of `wingbox boundaries` (`violation-known`,
+    `capability-violation-known`), each as the finding it hides, with the terms its entry states (Wingbox 0.13
+    prints them; before that an entry has none)."""
+    found: list[Finding] = []
     for line in lines:
         parsed = parse_line(line)
         if parsed is None:
@@ -479,9 +483,29 @@ def known(lines: list[str]) -> dict[tuple[str, ...], Acceptance]:
         head, args, keys = parsed
         terms = Acceptance(keys.get("known", ""), keys.get("owner", ""), keys.get("reason", ""), keys.get("expires", ""))
         if head == "violation-known" and len(args) >= 2:
-            found[("violation", args[0], args[1], keys.get("rule", ""))] = terms
+            found.append(Finding("violation", ("violation", args[0], args[1], keys.get("rule", "")),
+                                 f"`{args[0]}` -> `{args[1]}` ({keys.get('rule', '')})", terms))
         elif head == "capability-violation-known" and args:
-            found[("capability-violation", args[0], keys.get("capability", ""), keys.get("pattern", ""))] = terms
+            where = f"{args[0]}:{keys['line']}" if "line" in keys else args[0]
+            found.append(Finding("capability-violation", ("capability-violation", args[0], keys.get("capability", ""), keys.get("pattern", "")),
+                                 f"`{where}` uses {keys.get('capability', '?')} in layer {keys.get('layer', '?')}", terms))
+    return found
+
+
+def known(lines: list[str]) -> dict[tuple[str, ...], Acceptance]:
+    """What the baseline accepts, by the key of the finding each entry hides."""
+    return {finding.key: finding.accepted for finding in accepted(lines) if finding.accepted is not None}
+
+
+def expired(lines: list[str]) -> list[Finding]:
+    """The violations of `wingbox boundaries` whose baseline entry is past its end date (`:expired <date>`):
+    each finding with that date, and the owner when the entry names one."""
+    found: list[Finding] = []
+    for line in lines:
+        parsed = parse_line(line)
+        if parsed is not None and parsed[0] in ("violation", "capability-violation") and "expired" in parsed[2]:
+            terms = Acceptance("", parsed[2].get("owner", ""), "", parsed[2]["expired"])
+            found += [Finding(finding.head, finding.key, finding.text, terms) for finding in findings([line])[0]]
     return found
 
 
@@ -507,12 +531,27 @@ def judged(base: list[Finding], head: list[Finding], with_base_policy: Optional[
     introduced, and carries what in the change keeps the head from reporting it; when that is a baseline entry
     with an owner, a reason and an end date, the change accepts its own break openly and the finding goes to
     the second list. A finding of the base is gone only when neither policy reports it any more."""
-    head_keys = {finding.key for finding in head}
-    only_base = [Finding(finding.head, finding.key, finding.text, accepted.get(finding.key, Acceptance()))
-                 for finding in with_base_policy or [] if finding.key not in head_keys]
-    new, resolved = introduced(base, [*head, *only_base])
+    new, resolved = introduced(base, _under_both(head, with_base_policy, accepted))
     own = [finding for finding in new if finding.accepted is not None and finding.accepted.complete()]
     return [finding for finding in new if finding not in own], own, resolved
+
+
+def _under_both(head: list[Finding], with_base_policy: Optional[list[Finding]], accepted: dict[tuple[str, ...], Acceptance]) -> list[Finding]:
+    """The findings of the head under its own policy, then those only the policy of the base reports, each
+    with what in the change keeps the head from reporting it."""
+    head_keys = {finding.key for finding in head}
+    return [*head, *(Finding(finding.head, finding.key, finding.text, accepted.get(finding.key, Acceptance()))
+                     for finding in with_base_policy or [] if finding.key not in head_keys)]
+
+
+def existing(base: list[Finding], head: list[Finding], with_base_policy: Optional[list[Finding]],
+             accepted: dict[tuple[str, ...], Acceptance]) -> list[Finding]:
+    """The findings the head holds that the base has too: what was there before the change. A finding of the
+    base that only the change's own edit of a policy file hides is still there, unless a baseline entry with
+    an owner, a reason and an end date accepts it."""
+    base_keys = {finding.key for finding in base}
+    return [finding for finding in _under_both(head, with_base_policy, accepted)
+            if finding.key in base_keys and not (finding.accepted is not None and finding.accepted.complete())]
 
 
 def module_of(path: str) -> str:

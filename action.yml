@@ -13,7 +13,7 @@ inputs:
     description: How far dependents are followed from each changed file.
     default: "2"
   fail-on:
-    description: "none, violations (a layer, capability or pattern violation introduced by the pull request), not-checked (a part that could not be checked) or strict (everything but a PASS or NOT_APPLICABLE result)."
+    description: "none, violations (a layer, capability or pattern violation introduced by the pull request), not-checked (a part that could not be checked), strict (everything but a PASS or NOT_APPLICABLE result) or existing (the head holds a violation, one the pull request introduces or one that was there before)."
     default: none
   policy-change:
     description: "fail or report: what a change of a file the check is judged by does (.wingbox/baseline.sexp, the rules of .wingbox/, a declared rule file, the workflow that runs the check, the required-tests manifest). fail: the job fails. report: the report names the change. Empty: fail with fail-on strict, else report. The findings are judged with these files as the base has them either way."
@@ -83,6 +83,18 @@ outputs:
   coverage-complete:
     description: "true when the run left nothing out (every language parsed, every part checked, no changed file left out by paths, the checkout at the commit named, the graph fresh), else false; the evidence record says what was left out."
     value: ${{ steps.check.outputs.coverage-complete }}
+  existing-violations:
+    description: Number of violations of the boundary rules the head holds that the base has too.
+    value: ${{ steps.check.outputs.existing-violations }}
+  baseline-accepted:
+    description: Number of breaks of the rules the baseline of the head accepts.
+    value: ${{ steps.check.outputs.baseline-accepted }}
+  baseline-expired:
+    description: Number of baseline entries past their end date; their breaks are violations again.
+    value: ${{ steps.check.outputs.baseline-expired }}
+  eligible:
+    description: "true when no verdict of the run is failed, unknown, incomplete or expired (boundaries introduced and existing, baseline, tests, coverage), else false; the evidence record gives the reasons."
+    value: ${{ steps.check.outputs.eligible }}
   plan:
     description: Path of the review plan (S-expression lines) for a reviewing agent.
     value: ${{ steps.check.outputs.plan }}

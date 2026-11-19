@@ -223,7 +223,7 @@ def main() -> int:
                 print(post_note(comment, env["CI_API_V4_URL"], env["CI_PROJECT_ID"], merge_request, api_call(token), pr.needs_comment(report)))
             except (urllib.error.URLError, KeyError, ValueError) as error:
                 print(f"WARNING: could not write the merge request note ({error}); the report is in the job log and in {out}")
-    return max(pr.exit_status(report, fail_on), pr.tests_failed(report, env), pr.policy_failed(report))
+    return max(pr.fail_on_status(report, fail_on), pr.tests_failed(report, env), pr.policy_failed(report))
 
 
 if __name__ == "__main__":
