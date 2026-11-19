@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 1.4.1 - 2026-11-19
+
+### Changes
+
+- The default Wingbox release is 0.13.0: the parser of every language is part of the package
+  again, edges of the graph carry their source line, and the graph names what it was built from.
 
 ### Fixes
 
