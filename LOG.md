@@ -1,5 +1,38 @@
 # Log
 
+## 2026-11-19: no test found is `none-found`; a manifest of required tests (issue #16)
+
+What changed
+
+- `wingbox_report.tests_summary` (moved from `wingbox_evidence`, which still exports it): `none-found`
+  when test results were given, no test uses what changed and none is required; required tests and a
+  manifest that could not be read count. `tests_status(report, require, strict)`: a required test without
+  a passed record and an unreadable manifest fail; no test found fails only with `strict` and source code
+  in the change (`holds_source`). `outputs`: `tests-evidence`, `tests-required`, `tests-required-passed`.
+- `wingbox_tests.py`: `parse_manifest` (a strict reader of a YAML subset: groups, `paths`, `tests`, one
+  item per line; every refusal names its line), `Group`, `Manifest`, `Required`, `required_for` (the
+  groups a changed file touches), and in `evidence` a test named `<where>::<case>`.
+- `wingbox_pr.read_manifest`: the file as the base commit holds it (`git cat-file blob <merge base>:<path>`),
+  else the file of the checkout; `with_test_results` stores the manifest and the required tests of the
+  change; `tests_failed` says each reason (and takes `strict`).
+- Plan: `required-test`, `required-tests`, `required-tests-error` and `(tests :evidence <word>)` lines;
+  comment: "Tests that use what changed: none found." and "Required tests (...)"; record: `tests.required`,
+  `tests.manifest`, `none-found` (additions to schema version 2).
+- Input `required-tests`, `require-tests: strict`; `WINGBOX_REQUIRED_TESTS` in the shell-runner template.
+- Tests REQ-ACTION-117..129 (`tests/test_required_tests.py`).
+
+Why
+
+- Issue #16: a change no test uses, and test results without a case, read `complete`, and the tests a
+  control requires could not be declared.
+
+Not done
+
+- The check does not look whether a required test file exists in the commit: a required test that is not
+  in the reports is `no-record` either way.
+- A change of the manifest itself is not flagged here (the policy files are issue #18); the record says
+  which commit the manifest was read from.
+
 ## 2026-11-19: test evidence per test case (issue #15)
 
 What changed

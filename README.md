@@ -229,6 +229,8 @@ lines in the order to check:
 (changed-item "src/billing/invoice.py" total :kind fn :line 12 :how changed)
 (look "src/api/orders.py" 40 :module src/api/orders :why call :item total :places 2)
 (run-test "tests/test_invoice.py" :uses total :evidence passed :cases 4)
+(required-test "tests/test_refunds.py::test_refund" :group billing :evidence passed :cases 1)
+(tests :evidence complete)
 (test-case "tests/test_invoice.py" "tests.test_invoice" "test_total" :status passed)
 (test-report "test-results/junit.xml" :sha256 <digest> :cases 212)
 (test-changed "tests/test_invoice.py" :tests "src/billing/invoice.py")
@@ -238,8 +240,9 @@ lines in the order to check:
 
 `look` is a place outside the pull request that uses a changed item: open it.
 `look-module` is a module that uses a file whose other code changed.
-`run-test` is a test that uses what changed, and `test-case` a case the test
-reports hold of it. `changed-item ... :how calls
+`run-test` is a test that uses what changed, `required-test` a test the
+manifest of the repository requires for this change, and `test-case` a case
+the test reports hold of such a test. `changed-item ... :how calls
 :via (a b)` means the item calls `a`, which calls `b`, which changed.
 `changed-file` gives the SHA-256 of the file in the commit that was checked,
 what `git show <commit>:<path> | sha256sum` prints, so a reader can check that
@@ -337,14 +340,74 @@ and a `Test...` function of the file that no report names is a case
 report, is refused and named. `require-tests` is separate from `fail-on`: it
 does not change the result of the boundary check.
 
+### Required tests
+
+The tests the graph finds are those that use what changed. To say which tests
+a change must pass whatever the graph finds, keep a manifest in the
+repository, `.wingbox/required-tests.yaml` (or the path of the input
+`required-tests`):
+
+```yaml
+# .wingbox/required-tests.yaml
+billing:
+  paths:
+    - "src/billing/**"
+    - src/models/invoice.py
+  tests:
+    - tests/test_invoice.py
+    - tests/test_billing.py::test_total
+```
+
+A group has a name, the `paths` it applies to and the `tests` a change of
+those paths must pass. A path is a glob as the `paths` input takes it (`*`
+and `**` cross folders), a folder ending in `/`, or a module (a file without
+its ending). A test is a test file, matched like a test to run, or one case
+written `<file, class or Go folder>::<case>`:
+`tests/test_billing.py::test_total`, `com.shop.OrderTest::total`,
+`pkg/billing::TestInvoice`. The parameters (`test_total[1]`) and the subtests
+(`TestInvoice/zero`) of that case count.
+
+The file is YAML in a small subset, which the action reads without a YAML
+library: a group name and a colon at the start of a line, the two keys
+`paths` and `tests`, one `- item` per line, plain or in quotes (quote an item
+that starts with `*`), comments on lines of their own. Anything else refuses
+the whole manifest, with the line and the reason, and the test evidence is
+then `incomplete`: what the change must pass is not known.
+
+For a change that touches a path of a group, every test of the group is a
+`required-test` line of the plan with its evidence, the comment counts them
+("Required tests (2, by `.wingbox/required-tests.yaml` of the base): 1
+passed, 1 without a record in the test report"), and the evidence record
+lists each with its group and its status. The manifest is read from the base
+commit when the base holds it, so a change cannot drop a requirement it is
+judged by; a manifest that only the pull request adds is read from the
+checked files.
+
+The test evidence of a run is one word, the output `tests-evidence` and
+`tests.evidence` of the record:
+
+| evidence | when |
+|---|---|
+| `none` | no `test-results` were given |
+| `none-found` | reports were given, no test uses what changed and none is required: the reports say nothing about this change |
+| `failed` | a test to run or a required test has a failed case |
+| `incomplete` | one of them has a case that was skipped or did not run, or no record; or the manifest could not be read |
+| `complete` | every recorded case of every test to run and of every required test passed |
+
+`require-tests: true` fails the job unless every test to run and every
+required test is `passed`. A change for which no test was found passes, and
+the log says so. `require-tests: strict` also fails such a change when it
+holds source code outside the tests; a change of documents only passes.
+
 ### The evidence record
 
 Each run also writes `wingbox-evidence.json` (output `evidence`; in GitLab in
 `wingbox-out/`): one JSON document for a system that keeps evidence of change
 control. It holds the repository and the run, the base, the head, the commit
 that was checked, the result with its reasons, the counts, the changed files
-with their SHA-256, the tests to run with their evidence and every recorded
-case, the test reports, and the SHA-256 of the report and of the plan written
+with their SHA-256, the tests to run and the required tests with their
+evidence and every recorded case, the manifest of required tests as it was
+read, the test reports, and the SHA-256 of the report and of the plan written
 beside it. Its shape is
 [`schema/wingbox-evidence-2.schema.json`](schema/wingbox-evidence-2.schema.json)
 (`"schema": "wingbox-evidence/2"`); a record of 1.4 says `wingbox-evidence/1`
@@ -387,7 +450,8 @@ same pull request always gives the same diagram.
 | `head` | the head of the pull request | Head commit. |
 | `working-directory` | `.` | The checkout of the repository. |
 | `test-results` | none | Glob patterns of the JUnit XML reports the test step of the job wrote, one per line (`**` crosses folders). See [Evidence that the tests ran](#evidence-that-the-tests-ran). |
-| `require-tests` | `false` | Fail the job unless every test that uses what changed is `passed` in `test-results`: every case recorded for it passed. |
+| `require-tests` | `false` | `true`: fail the job unless every test that uses what changed, and every required test, is `passed` in `test-results`. `strict`: as `true`, and fail a change of source code for which no test was found. |
+| `required-tests` | `.wingbox/required-tests.yaml` | Path of the manifest of required tests, from the root of the repository. See [Required tests](#required-tests). |
 | `github-token` | `github.token` | Token for the comment. |
 
 ## Outputs
@@ -408,6 +472,9 @@ same pull request always gives the same diagram.
 | `tests-passed` | Number of those tests whose every recorded case passed in `test-results`; empty without test results. |
 | `tests-failed` | Number of those tests with a failed case; empty without test results. |
 | `tests-without-record` | Number of those tests that were skipped, in whole or in part, or are not in the test results; empty without test results. |
+| `tests-evidence` | The test evidence in one word: `none`, `none-found`, `complete`, `incomplete` or `failed`. |
+| `tests-required` | Number of tests the manifest of required tests names for this change. |
+| `tests-required-passed` | Number of those required tests that are `passed`; empty without test results. |
 
 ## GitLab CI
 
@@ -440,7 +507,8 @@ What it leaves:
 - `wingbox-out/wingbox.env` as a dotenv report, so later jobs of the pipeline read
   `WINGBOX_RESULT` (PASS, FAIL, UNKNOWN, NOT_APPLICABLE), `WINGBOX_EXECUTION`, `WINGBOX_REASONS`,
   `WINGBOX_TESTS_TO_RUN`, `WINGBOX_TESTS_PASSED`, `WINGBOX_TESTS_FAILED`,
-  `WINGBOX_TESTS_WITHOUT_RECORD`, `WINGBOX_INTRODUCED_FINDINGS`, `WINGBOX_UNTOUCHED_DEPENDENTS`
+  `WINGBOX_TESTS_WITHOUT_RECORD`, `WINGBOX_TESTS_EVIDENCE`, `WINGBOX_TESTS_REQUIRED`,
+  `WINGBOX_TESTS_REQUIRED_PASSED`, `WINGBOX_INTRODUCED_FINDINGS`, `WINGBOX_UNTOUCHED_DEPENDENTS`
   and `WINGBOX_NOT_CHECKED_PARTS`;
 - one note on the merge request, updated on each push, when the CI/CD variable
   `WINGBOX_GITLAB_TOKEN` holds a project access token with the `api` scope (mask the variable).
@@ -457,7 +525,8 @@ wingbox:
     WINGBOX_VERSION: "0.14.0"     # the wingbox release from PyPI
     WINGBOX_ACTION_REF: "v1"      # the tag, branch or commit of this repository the scripts come from
     WINGBOX_TEST_RESULTS: "test-results/*.xml"   # JUnit XML reports of the tests this job ran before the check
-    WINGBOX_REQUIRE_TESTS: "true"                # fail unless every test that uses what changed has a passed record
+    WINGBOX_REQUIRE_TESTS: "true"                # fail unless every test that uses what changed and every required test passed; or "strict"
+    WINGBOX_REQUIRED_TESTS: "ci/required-tests.yaml"   # the manifest of required tests; default .wingbox/required-tests.yaml
 ```
 
 The check runs in the `script` of the job; to hand over test reports, run the tests in
