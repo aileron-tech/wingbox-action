@@ -21,6 +21,7 @@ WORKING_TREE = "working-tree"
 # Findings of `wingbox boundaries` that count: a known (baselined) or type-only import is not one.
 FINDING_HEADS = ("violation", "violation-candidate", "capability-violation", "capability-candidate", "pattern-violation")
 BLOCKING_HEADS = ("violation", "capability-violation", "pattern-violation")
+IN_NO_PART = "in-no-part"
 # Name lists of an import edge whose first value is not a name: the facade, the glob module or the type.
 ROUTES_WITH_THROUGH = frozenset({"reexport", "glob", "member"})
 
@@ -165,6 +166,40 @@ class Tree:
     differs: tuple[str, ...] = ()    # files of the working folder that are not as in that commit (changed or untracked)
 
 
+@dataclass(frozen=True)
+class Part:
+    """A part of the repository as `wingbox boundaries --strict` accounts for it."""
+    part: str
+    style: str        # "" for a part that was not checked
+    modules: int
+    checked: bool
+    reason: str = ""  # why it was not checked
+
+
+@dataclass(frozen=True)
+class Graph:
+    """The state of the code graph the report was read from."""
+    state: str               # FRESH, STALE or UNKNOWN
+    reason: str = ""         # why it is not FRESH
+    tree: str = ""           # the digest of the source files the graph holds (`built-from :tree`)
+    commit: str = ""         # the commit it was built from, when the working folder had no change then
+    wingbox: str = ""        # the Wingbox version that built it
+    stale_files: int = 0     # changed files the graph is known to miss
+
+
+@dataclass(frozen=True)
+class Scan:
+    """What the graph of the head took in and what it left out."""
+    languages: tuple[tuple[str, int], ...]         # (language as the graph names it, files in the graph)
+    parts: Optional[tuple[Part, ...]]              # None: Wingbox does not say which parts it checked (before 0.13)
+    graph: Graph
+    patterns: tuple[str, ...] = ()                 # the `paths` input
+    ignored_files: int = 0                         # source files on disk that git ignores: not read
+    ignored_folders: tuple[str, ...] = ()          # folders on disk that git ignores as a whole
+    folders: tuple[tuple[str, int], ...] = ()      # (folder name Wingbox leaves out, tracked source files under it)
+    unresolved_calls: Optional[int] = None         # method calls without a visible receiver type; None: not counted
+
+
 def relation(checked: str, head: str, parents: tuple[str, ...]) -> str:
     """How the commit of the working folder relates to the head named: the same commit, a merge commit that
     has the head among its parents (what a pull request checkout gives by default), or another commit."""
@@ -206,6 +241,21 @@ class Report:
     self_accepted: tuple[Finding, ...] = field(default=())           # findings under the policy of the base that a complete new entry accepts
     baseline_entries: tuple[BaselineEntry, ...] = field(default=())  # the baseline entries the change adds or changes
     tests_deleted: tuple[tuple[str, str], ...] = field(default=())   # (deleted test file, changed source file it used on the base)
+    scan: Optional[Scan] = None                                      # what the graph took in and left out; None when not looked at
+
+
+def tree_reasons(report: Report) -> tuple[str, ...]:
+    """Why the files analysed are not the commit the report names; empty when they are (the head, or its merge
+    into the base, with no file changed since)."""
+    tree = report.tree
+    if tree is None or tree.relation == WORKING_TREE:
+        return ()
+    reasons = []
+    if tree.relation == "other":
+        reasons.append(f"tree-not-at-head: checked {tree.commit[:12]}, named {report.head[:12]}")
+    if tree.differs:
+        reasons.append(f"tree-differs-from-commit: {len(tree.differs)} file(s)")
+    return tuple(reasons)
 
 
 # ---------------------------------------------------------------------------
@@ -402,7 +452,9 @@ def findings(lines: list[str]) -> tuple[list[Finding], list[NotChecked]]:
             continue
         head, args, keys = parsed
         if head == "boundaries-not-checked":
-            not_checked.append(NotChecked(keys.get("part", "."), keys.get("reason", "unknown")))
+            # Files outside every part have no rules; only strict mode names them, and the coverage accounts for them.
+            if keys.get("reason") != IN_NO_PART:
+                not_checked.append(NotChecked(keys.get("part", "."), keys.get("reason", "unknown")))
         elif head in ("violation", "violation-candidate") and len(args) >= 2:
             text = f"`{args[0]}` -> `{args[1]}` ({keys.get('rule', '')})"
             found.append(Finding(head, (head, args[0], args[1], keys.get("rule", "")), text))

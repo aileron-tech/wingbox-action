@@ -80,6 +80,9 @@ outputs:
   policy-changed:
     description: Number of files the check is judged by that the pull request edits (the baseline, the rules, the workflow that runs the check).
     value: ${{ steps.check.outputs.policy-changed }}
+  coverage-complete:
+    description: "true when the run left nothing out (every language parsed, every part checked, no changed file left out by paths, the checkout at the commit named, the graph fresh), else false; the evidence record says what was left out."
+    value: ${{ steps.check.outputs.coverage-complete }}
   plan:
     description: Path of the review plan (S-expression lines) for a reviewing agent.
     value: ${{ steps.check.outputs.plan }}

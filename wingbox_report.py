@@ -16,10 +16,12 @@ from dataclasses import dataclass, replace
 from typing import Optional
 
 import wingbox_changes as changes
+import wingbox_coverage as coverage
 import wingbox_diagram as diagram
 import wingbox_tests
 from wingbox_facts import (BLOCKING_HEADS, MARKER, WORKING_TREE, Acceptance, ChangedFile, ChangedItem, Dependent, Finding, Report, Tree, User,
                            folder_of, module_of)
+from wingbox_facts import tree_reasons as _tree_reasons
 
 FAIL_ON = ("none", "violations", "not-checked", "strict")
 LIST_LIMIT = 10    # direct dependents and findings named in the comment; the job summary names them all
@@ -128,20 +130,6 @@ def needs_comment(report: Report) -> bool:
     it edits a file the check is judged by."""
     return (any(c.module is not None and not is_test(c.path) for c in report.changed) or bool(report.introduced)
             or bool(report.tool_errors) or bool(report.skipped_languages) or bool(_tree_reasons(report)) or bool(report.policy))
-
-
-def _tree_reasons(report: Report) -> tuple[str, ...]:
-    """Why the files analysed are not the commit the report names; empty when they are (the head, or its merge
-    into the base, with no file changed since)."""
-    tree = report.tree
-    if tree is None or tree.relation == WORKING_TREE:
-        return ()
-    reasons = []
-    if tree.relation == "other":
-        reasons.append(f"tree-not-at-head: checked {tree.commit[:12]}, named {report.head[:12]}")
-    if tree.differs:
-        reasons.append(f"tree-differs-from-commit: {len(tree.differs)} file(s)")
-    return tuple(reasons)
 
 
 def result(report: Report) -> tuple[str, str, tuple[str, ...]]:
@@ -437,6 +425,7 @@ def outputs(report: Report) -> dict[str, str]:
     return {"result": outcome, "execution": execution, "reasons": "; ".join(reasons),
             "untouched-dependents": str(untouched_count(report)), "introduced-findings": str(len(report.introduced)),
             "not-checked-parts": str(len(report.not_checked)), "policy-changed": str(len(report.policy)),
+            "coverage-complete": "true" if coverage.complete(report) else "false",
             "tests-to-run": str(len(tests_to_run(report))),
             "tests-passed": passed, "tests-failed": failed, "tests-without-record": without,
             "tests-evidence": tests_summary(report), "tests-required": str(len(report.required_tests)),
@@ -611,6 +600,9 @@ def build_plan(report: Report) -> str:
     lines += [f"(skipped-language {_atom(name)} :files {files})" for name, files in report.skipped_languages]
     if report.checked_modules is not None:
         lines.append(f"(checked :modules {report.checked_modules})")
+    if report.scan is not None:     # what the run took in was looked at: say whether it left something out
+        lines.append(f"(coverage :complete {'true' if coverage.complete(report) else 'false'} :graph {report.scan.graph.state})")
+        lines += [f"(coverage-gap {_q(reason)})" for reason in coverage.reasons(report)]
     commit = f" :commit {report.tree.commit}" if report.tree is not None and report.tree.commit else ""
     lines += [f"(changed-file {_q(path)} :sha256 {digest}{commit})" for path, digest in report.hashes]
     if report.tree is not None:

@@ -5,7 +5,7 @@
   "description": "What one run of the Wingbox pull request check looked at and found. Written as wingbox-evidence.json beside the report and the review plan.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "generated", "tool", "run", "subject", "result", "policy", "counts", "files", "tests", "documents"],
+  "required": ["schema", "generated", "tool", "run", "subject", "result", "policy", "coverage", "counts", "files", "tests", "documents"],
   "properties": {
     "schema": {"type": "string", "enum": ["wingbox-evidence/2"]},
     "generated": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$", "description": "UTC time the record was written."},
@@ -112,6 +112,101 @@
               "expires": {"type": "string"},
               "accepts": {"type": "boolean", "description": "true: the entry is complete and the finding is no violation. false: the finding is introduced."}
             }
+          }
+        }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "description": "What the run analysed and what it left out. complete is false when the result does not speak for the whole repository at the commit named.",
+      "additionalProperties": false,
+      "required": ["complete", "reasons", "repository", "commit", "tree", "languages", "parts", "excluded", "graph", "not-seen"],
+      "properties": {
+        "complete": {"type": "boolean"},
+        "reasons": {"type": "array", "items": {"type": "string"}, "description": "Why the run is not complete; empty when it is."},
+        "repository": {"type": "string"},
+        "commit": {"type": "string", "description": "The commit of the files that were analysed; empty for a working directory."},
+        "tree": {"type": "string", "enum": ["head", "merge", "other", "working-tree", "unknown"]},
+        "languages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["language", "analysed", "skipped"],
+            "properties": {
+              "language": {"type": "string"},
+              "analysed": {"type": "integer", "description": "Files of the language in the graph."},
+              "skipped": {"type": "integer", "description": "Files left out because the parser of the language is not installed."}
+            }
+          }
+        },
+        "parts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["part", "style", "modules", "checked", "reason"],
+            "properties": {
+              "part": {"type": "string"},
+              "style": {"type": "string", "description": "The architecture style whose rules were checked; empty for a part that was not checked."},
+              "modules": {"type": "integer"},
+              "checked": {"type": "boolean"},
+              "reason": {"type": "string", "description": "Why the part was not checked; empty for a checked part."}
+            }
+          }
+        },
+        "excluded": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["paths", "gitignore", "folders"],
+          "properties": {
+            "paths": {
+              "type": "object",
+              "description": "The paths input and the changed files it left out of the report.",
+              "additionalProperties": false,
+              "required": ["patterns", "changed-files"],
+              "properties": {"patterns": {"type": "array", "items": {"type": "string"}}, "changed-files": {"type": "array", "items": {"type": "string"}}}
+            },
+            "gitignore": {
+              "type": "object",
+              "description": "What git ignores on disk and Wingbox therefore does not read: source files, and folders ignored as a whole.",
+              "additionalProperties": false,
+              "required": ["files", "folders"],
+              "properties": {"files": {"type": "integer"}, "folders": {"type": "array", "items": {"type": "string"}}}
+            },
+            "folders": {
+              "type": "array",
+              "description": "Tracked source files in a folder Wingbox leaves out by its name (vendored or generated code), per folder name.",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["folder", "files"],
+                "properties": {"folder": {"type": "string"}, "files": {"type": "integer"}}
+              }
+            }
+          }
+        },
+        "graph": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state", "reason", "tree", "commit", "wingbox", "stale-files"],
+          "properties": {
+            "state": {"type": "string", "enum": ["FRESH", "STALE", "UNKNOWN"], "description": "FRESH: built by this run, no command found a changed file. STALE: it misses changed files or was built from another commit. UNKNOWN: the build failed, the graph could not be confirmed, or it does not say what it was built from."},
+            "reason": {"type": "string"},
+            "tree": {"type": "string", "description": "The digest of the source files the graph holds."},
+            "commit": {"type": "string", "description": "The commit the graph was built from, when the working folder had no change at build time."},
+            "wingbox": {"type": "string"},
+            "stale-files": {"type": "integer"}
+          }
+        },
+        "not-seen": {
+          "type": "array",
+          "description": "What a graph built from the source text does not see, with the number of such places where Wingbox counts them.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["what", "counted", "sites"],
+            "properties": {"what": {"type": "string"}, "counted": {"type": "boolean"}, "sites": {"type": "integer"}}
           }
         }
       }

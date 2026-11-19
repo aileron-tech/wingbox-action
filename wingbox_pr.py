@@ -56,12 +56,13 @@ from typing import Any, Callable, Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent))   # the modules next to this file, however it is loaded
 
 import wingbox_changes  # noqa: E402
+import wingbox_coverage  # noqa: E402
 import wingbox_evidence  # noqa: E402
 import wingbox_policy  # noqa: E402
 import wingbox_tests  # noqa: E402
 from wingbox_facts import (  # noqa: E402,F401
-    BLOCKING_HEADS, FINDING_HEADS, MARKER, WORKING_TREE, ChangedFile, ChangedItem, Dependent, Finding, Item, NotChecked, Report, Route, Site,
-    Tree, User, checked_modules, dependents, findings, folder_of, go_functions, introduced, items, judged, known, module_of, parse_line,
+    BLOCKING_HEADS, FINDING_HEADS, MARKER, WORKING_TREE, ChangedFile, ChangedItem, Dependent, Finding, Item, NotChecked, Report, Route, Scan,
+    Site, Tree, User, checked_modules, dependents, findings, folder_of, go_functions, introduced, items, judged, known, module_of, parse_line,
     parse_route, relation, selected, untouched, use_sites, users,
 )
 from wingbox_report import (  # noqa: E402,F401
@@ -75,6 +76,9 @@ TOOL_ERRORS: list[str] = []
 # Languages a build left out because their parser is not installed (name -> files): the result is then UNKNOWN.
 SKIPPED_LANGUAGES: dict[str, int] = {}
 _SKIPPED_LANGUAGE = re.compile(r"\(skipped-language (\S+) :files (\d+)")
+# What the commands that ran in a folder said about the graph they read there (wingbox_coverage.notes): a stale
+# graph, or one they could not confirm.
+GRAPH_NOTES: dict[str, list[tuple[str, str, int]]] = {}
 
 
 def _run(argv: list[str], cwd: str) -> subprocess.CompletedProcess[str]:
@@ -87,6 +91,9 @@ def _wingbox(cwd: str, *args: str) -> list[str]:
     done = _run([sys.executable, "-P", "-m", "wingbox", *args], cwd)
     for name, files in _SKIPPED_LANGUAGE.findall(f"{done.stderr}\n{done.stdout}"):
         SKIPPED_LANGUAGES[name] = max(SKIPPED_LANGUAGES.get(name, 0), int(files))
+    said = wingbox_coverage.notes(done.stderr or "")
+    if said:
+        GRAPH_NOTES.setdefault(cwd, []).extend(said)
     # A query may end with 1 or 2 (boundaries found violations, a name is unknown); a build must end with 0:
     # without a graph every later answer is empty, and an empty answer reads as "nothing to check".
     if done.returncode not in ((0,) if args[:1] == ("build",) else (0, 1, 2)):
@@ -148,20 +155,44 @@ def commit_hashes(root: str, commit: str, paths: list[str]) -> list[tuple[str, s
 
 
 def _boundaries(root: str) -> list[str]:
+    """Build the graph of root and ask for its boundary findings, in strict mode: the plain lines, then a line
+    per checked part and the result line. A Wingbox before 0.13 has no strict mode (it takes the word for a
+    module name and prints no result line): it is asked as before."""
     _wingbox(root, "build", root)
-    return _wingbox(root, "boundaries")
+    lines = _wingbox(root, "boundaries", "--strict")
+    return lines if any(line.startswith("(boundaries-result ") for line in lines) else _wingbox(root, "boundaries")
 
 
-_GRAPH_FACTS = ("(arch-part ", "(arch-declared-unread ", "(arch-known ", "(capability-known ")
+_GRAPH_FACTS = ("(arch-part ", "(arch-declared-unread ", "(arch-known ", "(capability-known ", "(built-from ", "(node ")
+_USE_FACTS = ("(code-graph-uses ", "(unresolved ")
+
+
+def _facts_of(root: str, name: str, heads: tuple[str, ...]) -> list[str]:
+    """The lines of a file Wingbox wrote into `.wingbox/` of root that start with one of heads; none without the file."""
+    try:
+        with open(Path(root) / ".wingbox" / name, encoding="utf-8", errors="replace") as stream:
+            return [line.rstrip("\n") for line in stream if line.startswith(heads)]
+    except OSError:
+        return []
 
 
 def _graph_facts(root: str) -> list[str]:
-    """The lines of the graph Wingbox built in root that name the rule files it read; none without a graph."""
-    try:
-        with open(Path(root) / ".wingbox" / "index.sexp", encoding="utf-8", errors="replace") as stream:
-            return [line.rstrip("\n") for line in stream if line.startswith(_GRAPH_FACTS)]
-    except OSError:
-        return []
+    """The lines of the graph Wingbox built in root that name the rule files it read, what it was built from
+    and its modules; none without a graph."""
+    return _facts_of(root, "index.sexp", _GRAPH_FACTS)
+
+
+def _scan(root: str, boundaries: list[str], patterns: list[str], commit: str) -> Scan:
+    """What the graph of root took in and left out, read after the last query: the languages and the state of
+    the graph from its own facts and from what the commands said, the parts from the strict account, and from
+    git the source files it ignores on disk and the tracked ones in a folder Wingbox leaves out."""
+    graph = _graph_facts(root)
+    tracked = _git(root, "ls-files").splitlines()
+    files, folders = wingbox_coverage.ignored(_git(root, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory").splitlines())
+    failed = any(error.startswith("wingbox build ") for error in TOOL_ERRORS)
+    return Scan(wingbox_coverage.languages(graph), wingbox_coverage.parts(boundaries),
+                wingbox_coverage.graph_state(graph, tuple(GRAPH_NOTES.get(root, ())), commit, failed), tuple(patterns), files, folders,
+                wingbox_coverage.left_out(tracked), wingbox_coverage.unresolved_calls(_facts_of(root, "index.uses.sexp", _USE_FACTS)))
 
 
 def _blob(root: str, commit: str, path: str) -> Optional[bytes]:
@@ -414,7 +445,7 @@ def collect(root: str, base: str, head: str, hops: int, patterns: list[str], ver
                   tests_changed=bent, tool_errors=tuple(dict.fromkeys(TOOL_ERRORS)), hashes=tuple(hashes),
                   checked_modules=checked_modules(head_lines), skipped_languages=tuple(sorted(SKIPPED_LANGUAGES.items())), tree=tree,
                   policy=policy, policy_base=judging if policy else "", self_accepted=tuple(own), baseline_entries=entries,
-                  tests_deleted=tests_deleted)
+                  tests_deleted=tests_deleted, scan=_scan(root, head_lines, patterns, tree.commit))
 
 
 def utc(seconds: float) -> str:
