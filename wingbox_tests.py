@@ -24,6 +24,7 @@ MANIFEST_PATH = ".wingbox/required-tests.yaml"   # the manifest of required test
 SIDECAR_LIMIT = 64 * 1024          # bytes of the sidecar of a report
 SIDECAR_ENDING = ".run.json"       # the sidecar of a report: the name of the report with this ending
 TRACKED, UNTRACKED, UNKNOWN = "tracked", "untracked", "unknown"     # what git says of a report file
+STEP_OUTCOMES = ("success", "failure", "cancelled", "skipped")      # how the test step of the job ended, as GitHub names it
 # A file Wingbox reads as source code, by its ending.
 SOURCE_FILE = re.compile(r"\.(?:py|pyi|ts|tsx|mts|cts|js|jsx|mjs|cjs|rs|cs|java|kt|go|rb|php|dart|pas|pp)$")
 

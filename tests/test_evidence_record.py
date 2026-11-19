@@ -85,13 +85,13 @@ class RecordTest(unittest.TestCase):
         self.assertEqual("complete", we.tests_summary(with_tests(test_cases=cases(("tests/order.test.ts", ""), ("tests/invoice.test.ts", "")))))
 
     def test_the_record_is_written_beside_the_report(self) -> None:
-        """/* REQ-ACTION-104: the run writes the record as wingbox-evidence.json in its output folder, as JSON that reads back to the same record; action.yml has the output `evidence`, README.md documents it and the schema, and the GitLab wrapper names the job from CI_PROJECT_PATH, CI_JOB_ID and CI_JOB_URL, which the shell-runner template hands to the container */"""
+        """/* REQ-ACTION-104: the run writes the record as wingbox-evidence.json in its output folder, as JSON that reads back to the same record; action.yml has the output `evidence` (of the check step, else of the step that records a check that did not run), README.md documents it and the schema, and the GitLab wrapper names the job from CI_PROJECT_PATH, CI_JOB_ID and CI_JOB_URL, which the shell-runner template hands to the container */"""
         with tempfile.TemporaryDirectory() as folder:
             path = pr.write_evidence(report(), RUN, folder, {"wingbox-report.md": "x"})
             self.assertEqual(Path(folder) / "wingbox-evidence.json", Path(path))
             self.assertEqual(we.build_evidence(report(), RUN, {"wingbox-report.md": "x"}), json.loads(Path(path).read_text(encoding="utf-8")))
         action = (ROOT / "action.yml").read_text(encoding="utf-8")
-        self.assertRegex(action, r"\n  evidence:\n    description: [^\n]+\n    value: \$\{\{ steps\.check\.outputs\.evidence \}\}\n")
+        self.assertRegex(action, r"\n  evidence:\n    description: [^\n]+\n    value: \$\{\{ steps\.check\.outputs\.evidence \|\| steps\.did-not-run\.outputs\.evidence \}\}\n")
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         for needed in ("`evidence`", "wingbox-evidence.json", "schema/wingbox-evidence-1.schema.json", "examples/evidence-handover.yml"):
             self.assertIn(needed, readme)

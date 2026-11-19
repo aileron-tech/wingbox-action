@@ -24,8 +24,16 @@ wingbox:
     WINGBOX_IMAGE: "python:3.12"      # the image the check runs in (Python 3.11 or newer, with git)
     WINGBOX_HOPS: "2"
     WINGBOX_FAIL_ON: "none"           # none, violations, not-checked or strict
+    WINGBOX_TEST_SCRIPT: ""           # the command that runs your tests on the runner and writes JUnit XML (see the README)
   script:
     - mkdir -p wingbox-out
+    # The tests first, with their status kept: the check runs whatever they say, learns how they ended,
+    # and the job ends with the tests' status.
+    - tests_status=0
+    - if [ -n "$WINGBOX_TEST_SCRIPT" ]; then sh -c "$WINGBOX_TEST_SCRIPT" || tests_status=$?; fi
+    - if [ -n "$WINGBOX_TEST_SCRIPT" ]; then export WINGBOX_TEST_COMMAND="$WINGBOX_TEST_SCRIPT" WINGBOX_TEST_STEP_OUTCOME=success; fi
+    - if [ "$tests_status" -ne 0 ]; then export WINGBOX_TEST_STEP_OUTCOME=failure; fi
+    - check_status=0
     - >
       docker run --rm --user "$(id -u):$(id -g)" --env HOME=/tmp
       --volume "$CI_PROJECT_DIR:/repo:ro" --volume "$CI_PROJECT_DIR/wingbox-out:/ci/wingbox-out"
@@ -33,20 +41,32 @@ wingbox:
       --env WINGBOX_VERSION --env WINGBOX_ACTION_REF --env WINGBOX_HOPS --env WINGBOX_FAIL_ON
       --env WINGBOX_PATHS --env WINGBOX_BASE --env WINGBOX_HEAD --env WINGBOX_COMMENT --env WINGBOX_GITLAB_TOKEN
       --env WINGBOX_TEST_RESULTS --env WINGBOX_REQUIRE_TESTS --env WINGBOX_REQUIRED_TESTS --env WINGBOX_TEST_RESULTS_ROOT=/repo
-      --env WINGBOX_TEST_COMMAND --env WINGBOX_REQUIRE_TEST_PROVENANCE
+      --env WINGBOX_TEST_COMMAND --env WINGBOX_REQUIRE_TEST_PROVENANCE --env WINGBOX_TEST_STEP_OUTCOME
       --env CI_PIPELINE_SOURCE --env CI_COMMIT_SHA --env CI_COMMIT_BEFORE_SHA
       --env CI_MERGE_REQUEST_DIFF_BASE_SHA --env CI_MERGE_REQUEST_IID --env CI_PROJECT_ID --env CI_API_V4_URL
       --env CI_PROJECT_PATH --env CI_JOB_ID --env CI_JOB_URL --env CI_JOB_NAME
       --env CI_PIPELINE_ID --env CI_PIPELINE_CREATED_AT --env CI_JOB_STARTED_AT
       "$WINGBOX_IMAGE" sh -ec '
-      python -P -m venv /tmp/venv;
-      /tmp/venv/bin/python -P -m pip install --disable-pip-version-check --quiet "wingbox[all]==$WINGBOX_VERSION";
       git -c init.defaultBranch=main clone --quiet https://github.com/aileron-tech/wingbox-action.git /tmp/action;
       git -C /tmp/action checkout --quiet "$WINGBOX_ACTION_REF";
-      git -c init.defaultBranch=main clone --quiet --no-checkout /repo /tmp/work;
-      git -C /tmp/work checkout --quiet --detach "$CI_COMMIT_SHA";
-      cd /tmp/work;
-      exec /tmp/venv/bin/python /tmp/action/wingbox_gitlab.py'
+      status=0;
+      { python -P -m venv /tmp/venv
+      && /tmp/venv/bin/python -P -m pip install --disable-pip-version-check --quiet "wingbox[all]==$WINGBOX_VERSION"
+      && git -c init.defaultBranch=main clone --quiet --no-checkout /repo /tmp/work
+      && git -C /tmp/work checkout --quiet --detach "$CI_COMMIT_SHA"
+      && cd /tmp/work
+      && /tmp/venv/bin/python /tmp/action/wingbox_gitlab.py; } || status=$?;
+      if [ "$status" -ne 0 ] && [ ! -s /ci/wingbox-out/wingbox-evidence.json ]; then python -P /tmp/action/wingbox_gitlab.py --did-not-run || true; fi;
+      exit "$status"'
+      || check_status=$?
+    # A record also when the container left none (it could not start, or the scripts could not be fetched):
+    # the smallest record, written here.
+    - >
+      if [ "$check_status" -ne 0 ] && [ ! -s wingbox-out/wingbox-evidence.json ]; then
+      printf '%s\n' '{"result": {"boundaries": "UNKNOWN", "execution": "error", "reasons": ["check-did-not-run"]}}' > wingbox-out/wingbox-evidence.json;
+      fi
+    - if [ "$tests_status" -ne 0 ]; then exit "$tests_status"; fi
+    - exit "$check_status"
   artifacts:
     when: always
     expire_in: 30 days

@@ -443,6 +443,25 @@ def merge_base(root: str, report: Report) -> str:
     return done.stdout.strip() if done.returncode == 0 else ""
 
 
+def step_outcome(env: Any) -> Optional[str]:
+    """How the test step of the job ended (WINGBOX_TEST_STEP_OUTCOME: what `steps.<id>.outcome` gives); ""
+    when it is not said; None when the value is none of wingbox_tests.STEP_OUTCOMES."""
+    said = env.get("WINGBOX_TEST_STEP_OUTCOME", "").strip()
+    return said if said in ("", *wingbox_tests.STEP_OUTCOMES) else None
+
+
+OUTCOME_ERROR = f"test-step-outcome must be one of {', '.join(wingbox_tests.STEP_OUTCOMES)}"
+
+
+def not_run_report(base: str, head: str, env: Any) -> Report:
+    """The report of a check that did not run (its install failed, or it ended before it wrote a record):
+    nothing was looked at. It carries what the job still knows: the two commits named, the outcome of the
+    test step and the test command."""
+    empty = Report(env.get("WINGBOX_VERSION", "?"), int(env.get("WINGBOX_HOPS", "2") or 2), base, head, (), (), 0, (), did_not_run=True,
+                   test_step_outcome=step_outcome(env) or "")
+    return dataclasses.replace(empty, test_origin=test_origin(env, empty))
+
+
 def with_test_results(report: Report, env: Any, root: str) -> Report:
     """The report with the test reports the job hands over (the patterns of WINGBOX_TEST_RESULTS, one per
     line, looked for under WINGBOX_TEST_RESULTS_ROOT, else under the repository) and with the tests the
@@ -457,7 +476,8 @@ def with_test_results(report: Report, env: Any, root: str) -> Report:
     names = [test.shown for test in tests_to_run(report)] + [item.test for item in required]
     functions = go_test_functions(root, names, list(cases)) if cases else ()
     return dataclasses.replace(report, test_cases=cases, test_reports=reports, test_report_errors=errors, test_functions=functions,
-                               tests_manifest=manifest, required_tests=required, test_origin=origin if patterns else None)
+                               tests_manifest=manifest, required_tests=required, test_origin=origin if patterns or origin.command else None,
+                               test_step_outcome=step_outcome(env) or "")
 
 
 def copy_map(root: str, folder: str) -> str:
@@ -509,6 +529,8 @@ def tests_failed(report: Report, env: Any, say: Callable[[str], None] = print) -
     found, needed = test_evidence(report), required_evidence(report)
     given = " (no test report was given)" if found is None else " in the test reports given"
     manifest = report.tests_manifest
+    if report.test_step_outcome not in ("", "success"):
+        say(f"Wingbox: require-tests: the test step of the job ended with {report.test_step_outcome}")
     if manifest is not None and manifest.errors:
         say(f"Wingbox: require-tests: the manifest of required tests {manifest.path} could not be read: {'; '.join(manifest.errors)}")
     missing = len(tests_to_run(report)) if found is None else sum(1 for item in found if item.status != wingbox_tests.PASSED)
@@ -517,7 +539,7 @@ def tests_failed(report: Report, env: Any, say: Callable[[str], None] = print) -
     lacking = len(report.required_tests) if needed is None else sum(1 for item in needed if item.status != wingbox_tests.PASSED)
     if lacking and manifest is not None:
         say(f"Wingbox: require-tests: {lacking} required test(s) of {manifest.path} have no passing record{given}")
-    if not tests_to_run(report) and not report.required_tests and not manifest_errors(report):
+    if not tests_to_run(report) and not report.required_tests and not manifest_errors(report) and report.test_step_outcome in ("", "success"):
         say("Wingbox: require-tests: no test that uses what changed was found"
             + (", and the change holds source code (require-tests is strict)" if status else ""))
     return status
@@ -569,17 +591,43 @@ def settings(argv: list[str], env: Any, pull: dict[str, Any]) -> tuple[str, str,
     return root, base, head, out
 
 
+NOT_RUN_KEY = "--did-not-run"
+
+
+def did_not_run(args: list[str], env: Any, pull: dict[str, Any]) -> int:
+    """Write the record of a check that did not run, and its outputs; 0. The last step of the action calls
+    this when the check step left no record, so that a job that hands records over always has one."""
+    _root, base, head, temp = settings(args, env, pull)
+    os.makedirs(temp, exist_ok=True)
+    report = not_run_report(base, "" if head == "HEAD" and not env.get("WINGBOX_HEAD") else head, env)
+    path = write_evidence(report, github_run(env, str(pull.get("number") or "")), temp, {})
+    if env.get("GITHUB_OUTPUT"):
+        _append(env["GITHUB_OUTPUT"], f"evidence={path}\n" + "".join(f"{name}={value}\n" for name, value in outputs(report).items()))
+    print(f"Wingbox: the check did not run; the record that says so is {path}")
+    return 0
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     env = os.environ
+    args = sys.argv[1:] if argv is None else argv
+    event: dict[str, Any] = {}
+    if env.get("GITHUB_EVENT_PATH") and os.path.isfile(env["GITHUB_EVENT_PATH"]):
+        try:
+            event = json.loads(Path(env["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))
+        except ValueError:
+            if NOT_RUN_KEY not in args:
+                raise
+    pull = event.get("pull_request") or {}
+    if NOT_RUN_KEY in args:
+        return did_not_run([arg for arg in args if arg != NOT_RUN_KEY], env, pull)
     fail_on = env.get("WINGBOX_FAIL_ON", "none")
     if fail_on not in FAIL_ON:
         print(f"::error::fail-on must be one of {', '.join(FAIL_ON)}, not {fail_on!r}")
         return 2
-    event: dict[str, Any] = {}
-    if env.get("GITHUB_EVENT_PATH") and os.path.isfile(env["GITHUB_EVENT_PATH"]):
-        event = json.loads(Path(env["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))
-    pull = event.get("pull_request") or {}
-    root, base, head, temp = settings(sys.argv[1:] if argv is None else argv, env, pull)
+    if step_outcome(env) is None:
+        print(f"::error::{OUTCOME_ERROR}, not {env.get('WINGBOX_TEST_STEP_OUTCOME')!r}")
+        return 2
+    root, base, head, temp = settings(args, env, pull)
     root = os.path.abspath(root)
     os.makedirs(temp, exist_ok=True)
     if not base:

@@ -69,6 +69,7 @@ def build_evidence(report: Report, run: Run, documents: dict[str, str]) -> dict[
         "files": [{"path": path, "sha256": digest} for path, digest in report.hashes],
         "tests": {
             "evidence": tests_summary(report),
+            "step-outcome": report.test_step_outcome,
             "to-run": [{"test": test.shown, **_test_record(recorded.get(test.shown))} for test in tests_to_run(report)],
             "required": [{"group": wanted.group, "test": wanted.test, **_test_record(None if needed is None else needed[index])}
                          for index, wanted in enumerate(report.required_tests)],
