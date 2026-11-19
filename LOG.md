@@ -1,5 +1,39 @@
 # Log
 
+## 2026-11-19: the coverage of a run in the evidence record (issue #21)
+
+What changed
+
+- `wingbox_coverage.py` (new, pure): `parts` (the strict account of `wingbox boundaries --strict`), `languages`
+  (the `node` facts of the graph by language), `notes` and `graph_state` (FRESH, STALE, UNKNOWN from the
+  `built-from` fact, from what the commands print about a stale or unconfirmed graph, and from a failed
+  build), `unresolved_calls` (the use file), `left_out` and `ignored` (from git's lists), `reasons`,
+  `complete`, and the `coverage` object of the record.
+- `wingbox_facts`: `Part`, `Graph`, `Scan`, `Report.scan`; `tree_reasons` moved here from `wingbox_report`
+  (the coverage says the same reasons); `findings` leaves `in-no-part` lines out of the parts not checked.
+- `wingbox_pr`: `_boundaries` asks with `--strict` and falls back to the plain command when the output has no
+  `boundaries-result` line; `_wingbox` keeps the stale notes per folder (`GRAPH_NOTES`); `_scan` reads the
+  graph, the use file, `git ls-files` and `git ls-files --others --ignored --exclude-standard --directory`
+  after the last query.
+- `wingbox_report`: the output `coverage-complete`; the plan lines `coverage` and `coverage-gap` for a report
+  with a scan.
+- `schema/wingbox-evidence-2.schema.json`: `coverage`. Tests REQ-ACTION-152..159 (`tests/test_coverage.py`).
+
+Why
+
+- Issue #21: a partial run reached the record as free text in `result.reasons` and one number; the files left
+  out by `paths` not at all.
+- Verified with Wingbox 0.14.0 (a complete and a partial run end to end, a real stale note) and with 0.11.0
+  (no `built-from`, no strict mode: the findings are read as before, the coverage says UNKNOWN twice).
+
+Not done
+
+- No count of tracked source files the graph does not hold for another reason than a folder Wingbox leaves
+  out: that needs the graph's file list matched against git's, and the endings Wingbox reads per version.
+- Reflection and imports built from strings are named, not counted: Wingbox does not count them.
+- A graph that misses files makes the coverage incomplete, not the result UNKNOWN (the verdicts of issue #19
+  carry it to `eligible`).
+
 ## 2026-11-19: a change is judged with the policy files of the base (issue #18)
 
 What changed

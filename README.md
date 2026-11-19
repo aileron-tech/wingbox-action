@@ -552,7 +552,7 @@ Each run also writes `wingbox-evidence.json` (output `evidence`; in GitLab in
 `wingbox-out/`): one JSON document for a system that keeps evidence of change
 control. It holds the repository and the run, the base, the head, the commit
 that was checked, the result with its reasons, the policy files the change
-edits (`policy`), the counts, the changed files
+edits (`policy`), what the run analysed and left out (`coverage`), the counts, the changed files
 with their SHA-256, the tests to run and the required tests with their
 evidence and every recorded case, the manifest of required tests as it was
 read, the test reports with where each comes from, and the SHA-256 of the
@@ -573,6 +573,38 @@ secret but the default token, and a hand-over job that never checks out the
 code, takes the record as an artifact and posts it to an HTTP endpoint with a
 secret only that job holds. Its test step, check and upload are written as
 above, so a run whose tests fail hands over its record too.
+
+### What the run covered
+
+A result speaks for what was analysed. The record says what that was, in its
+object `coverage`, so that a system reading it does not have to parse the
+reasons:
+
+| Field | Holds |
+|---|---|
+| `repository`, `commit`, `tree` | the repository, the commit whose files were analysed, and how it relates to the head |
+| `languages` | per language the files in the graph (`analysed`) and the files left out because its parser is not installed (`skipped`) |
+| `parts` | each part of the repository with its architecture style, its modules, whether its rules were checked, and the reason when not (from `wingbox boundaries --strict`); files outside every part are a part `-` with the reason `in-no-part` |
+| `excluded` | `paths`: the patterns of the `paths` input and the changed files they left out; `gitignore`: the source files and the folders git ignores on disk, which Wingbox does not read; `folders`: tracked source files in a folder Wingbox leaves out by its name (`vendor`, `node_modules`, `dist`, `build`, `target` and the like), per folder name |
+| `graph` | the state of the graph, `FRESH`, `STALE` or `UNKNOWN`, with the reason, the digest of its source files, the commit it was built from and the Wingbox version (its `built-from` fact), and the number of changed files it misses |
+| `not-seen` | what a graph built from the source text does not see: reflection, imports built from strings, calls through an untyped receiver; the last with the number of such calls where Wingbox counts them |
+
+`coverage.complete` is `true` when nothing was left out: every language
+parsed, every part checked, no changed file left out by `paths`, the checkout
+at the commit named with no file changed, no failed command, the graph
+`FRESH`. Otherwise it is `false` and `coverage.reasons` says why, in the words
+of the reasons of the result where both say the same. The graph is `FRESH`
+when this run built it and no command found a changed file; `STALE` when a
+Wingbox command says it misses changed files or it was built from another
+commit; `UNKNOWN` when the build failed, the graph could not be confirmed, or
+it does not say what it was built from (Wingbox before 0.13, which also does
+not name the parts it checked). A stale or unknown graph is never an empty
+field, and never complete. What `excluded` and `not-seen` list is how the
+analysis is made: it is stated, and does not make a run incomplete.
+
+The output `coverage-complete` (GitLab: `WINGBOX_COVERAGE_COMPLETE`) holds
+`true` or `false`, and the plan has a `(coverage :complete true|false :graph
+<state>)` line with a `coverage-gap` line per reason.
 
 ### The diagram
 
@@ -623,6 +655,7 @@ same pull request always gives the same diagram.
 | `introduced-findings` | Number of boundary findings the pull request introduces. |
 | `not-checked-parts` | Number of parts `wingbox boundaries` could not check. |
 | `policy-changed` | Number of files the check is judged by that the pull request edits. |
+| `coverage-complete` | `true` when the run left nothing out, else `false`. See [What the run covered](#what-the-run-covered). |
 | `plan` | Path of the review plan (S-expression lines) on the runner. |
 | `evidence` | Path of the evidence record of the run (`wingbox-evidence.json`). Written also when the check did not run. |
 | `result` | `PASS`, `FAIL`, `UNKNOWN` or `NOT_APPLICABLE`: the result of the boundary check. |
@@ -670,7 +703,7 @@ What it leaves:
   `WINGBOX_TESTS_TO_RUN`, `WINGBOX_TESTS_PASSED`, `WINGBOX_TESTS_FAILED`,
   `WINGBOX_TESTS_WITHOUT_RECORD`, `WINGBOX_TESTS_EVIDENCE`, `WINGBOX_TESTS_REQUIRED`,
   `WINGBOX_TESTS_REQUIRED_PASSED`, `WINGBOX_TEST_REPORTS_REFUSED`, `WINGBOX_INTRODUCED_FINDINGS`,
-  `WINGBOX_UNTOUCHED_DEPENDENTS`, `WINGBOX_POLICY_CHANGED` and `WINGBOX_NOT_CHECKED_PARTS`;
+  `WINGBOX_UNTOUCHED_DEPENDENTS`, `WINGBOX_POLICY_CHANGED`, `WINGBOX_COVERAGE_COMPLETE` and `WINGBOX_NOT_CHECKED_PARTS`;
 - one note on the merge request, updated on each push, when the CI/CD variable
   `WINGBOX_GITLAB_TOKEN` holds a project access token with the `api` scope (mask the variable).
   The job token cannot write notes; without the variable the report stays in the log and the
@@ -803,8 +836,9 @@ fixture repository on Linux, macOS and Windows.
 
 `wingbox_pr.py` is the I/O (git, the wingbox commands, the GitHub API);
 `wingbox_facts.py` reads the facts Wingbox prints, `wingbox_policy.py` knows
-the files the check is judged by, `wingbox_report.py` builds the report and
-`wingbox_diagram.py` the diagram, all pure functions.
+the files the check is judged by, `wingbox_coverage.py` accounts for what was
+analysed, `wingbox_report.py` builds the report and `wingbox_diagram.py` the
+diagram, all pure functions.
 
 ## License
 

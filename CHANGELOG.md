@@ -91,6 +91,21 @@
   test changed together with its code (`test-deleted` in the plan).
 - The evidence record (`schema/wingbox-evidence-2.schema.json`) gains the
   object `policy`.
+- What a run analysed and what it left out is in the record as the object
+  `coverage` ([#21](https://github.com/aileron-tech/wingbox-action/issues/21)):
+  the repository and the commit, the languages with the files analysed and
+  skipped, the parts with their style, modules and whether their rules were
+  checked, what was excluded (the `paths` input with the changed files it
+  left out, what git ignores, the folders Wingbox leaves out), the state of
+  the graph (`FRESH`, `STALE` or `UNKNOWN`, with its `built-from` digest and
+  commit), and what a static graph does not see. `coverage.complete` is
+  `false` with its reasons when something was left out. Output
+  `coverage-complete` (GitLab: `WINGBOX_COVERAGE_COMPLETE`); the plan has a
+  `coverage` line and a `coverage-gap` line per reason.
+- The check asks `wingbox boundaries --strict` (Wingbox 0.13 and newer; an
+  older one is asked as before). The result of the boundary check does not
+  change: files outside every part, which only strict mode names, are in
+  `coverage.parts` and not among the parts not checked.
 
 ### Fixes
 
