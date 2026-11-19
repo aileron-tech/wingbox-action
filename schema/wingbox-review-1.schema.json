@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/aileron-tech/wingbox-action/blob/main/schema/wingbox-review-1.schema.json",
+  "title": "Wingbox evidence review, version 1",
+  "description": "The decision of a person about the evidence of a package: the member reviews/NNNN.json. It names the SHA-256 of the manifest it is about and of the review before it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "sequence", "manifest-sha256", "bundle", "reviewer", "decision", "grounds", "time", "previous"],
+  "properties": {
+    "schema": {"type": "string", "enum": ["wingbox-review/1"]},
+    "sequence": {"type": "integer", "description": "1 for the first review of a package; the number in the member name."},
+    "manifest-sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "The SHA-256 of manifest.json as it was reviewed."},
+    "bundle": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "reviewer": {"type": "string"},
+    "decision": {"type": "string", "enum": ["accepted", "rejected"]},
+    "grounds": {"type": "string"},
+    "time": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$", "description": "UTC time of the decision."},
+    "previous": {"type": "string", "pattern": "^([0-9a-f]{64})?$", "description": "The SHA-256 of the review before this one; empty for the first."}
+  }
+}

@@ -77,6 +77,49 @@ jobs:
         shell: bash
         working-directory: ${{ runner.temp }}/fixture
         run: test -z "$(git status --porcelain)"
+  # The evidence package of a run on the fixture repository: the action writes it, the command verifies it
+  # against the repository, the package built again by hand is the same bytes, and a review is added.
+  package:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Fixture repository
+        id: fixture
+        shell: bash
+        run: python tests/make_fixture.py "$RUNNER_TEMP/fixture" >> "$GITHUB_OUTPUT"
+      - name: Run the action
+        id: wingbox
+        uses: ./
+        with:
+          working-directory: ${{ runner.temp }}/fixture
+          base: ${{ steps.fixture.outputs.base }}
+          head: ${{ steps.fixture.outputs.head }}
+          comment: "false"
+          package: true
+      - name: Verify the package, build it again, review it
+        shell: bash
+        env:
+          PACKAGE: ${{ steps.wingbox.outputs.package }}
+          STATE: ${{ steps.wingbox.outputs.package-state }}
+        run: |
+          test "$STATE" = complete
+          python -P wingbox_evidence_cli.py verify "$PACKAGE" --repo "$RUNNER_TEMP/fixture"
+          python -P wingbox_evidence_cli.py pack --run-dir "$RUNNER_TEMP" --out "$RUNNER_TEMP/again.zip" --repo "$RUNNER_TEMP/fixture" --workflow .github/workflows/test.yml
+          cmp "$PACKAGE" "$RUNNER_TEMP/again.zip"
+          python -P wingbox_evidence_cli.py review "$PACKAGE" --reviewer "the test workflow" --decision accepted --grounds "the package verifies against the fixture repository"
+          python -P wingbox_evidence_cli.py verify "$PACKAGE" --repo "$RUNNER_TEMP/fixture"
+      - name: Check that the fixture checkout is clean
+        shell: bash
+        working-directory: ${{ runner.temp }}/fixture
+        run: test -z "$(git status --porcelain)"
   # The check job of examples/evidence-handover.yml with a test step that fails: the check still runs, its
   # record says that the tests failed, and the next job receives it. The last step of the example fails the
   # job; here a step checks the same condition instead, so that this workflow stays green.

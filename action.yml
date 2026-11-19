@@ -57,6 +57,9 @@ inputs:
   required-tests:
     description: "Path of the manifest of required tests, from the root of the repository; empty: .wingbox/required-tests.yaml when the repository has it. The manifest of the base commit counts."
     default: ""
+  package:
+    description: "true: also write the evidence package of the run, wingbox-package.zip beside the record: the record, the report, the plan, the test reports the record names as they are on disk, the policy files as the commit checked holds them and the schemas, with a manifest of every member. An incomplete package fails the step."
+    default: "false"
   github-token:
     description: Token for the comment (needs pull-requests write).
     default: ${{ github.token }}
@@ -101,6 +104,12 @@ outputs:
   evidence:
     description: Path of the evidence record of the run (wingbox-evidence.json, shape in schema/wingbox-evidence-2.schema.json). Written also when the check did not run.
     value: ${{ steps.check.outputs.evidence || steps.did-not-run.outputs.evidence }}
+  package:
+    description: Path of the evidence package of the run (wingbox-package.zip); empty unless package is true.
+    value: ${{ steps.check.outputs.package || steps.did-not-run.outputs.package }}
+  package-state:
+    description: "complete, or incomplete when a required member of the evidence package is absent; empty unless package is true."
+    value: ${{ steps.check.outputs.package-state || steps.did-not-run.outputs.package-state }}
   result:
     description: "Result of the boundary check: PASS, FAIL, UNKNOWN or NOT_APPLICABLE. A part that was not checked or a tool error is UNKNOWN, never PASS."
     value: ${{ steps.check.outputs.result || steps.did-not-run.outputs.result }}
@@ -171,6 +180,7 @@ runs:
         WINGBOX_TEST_COMMAND: ${{ inputs.test-command }}
         WINGBOX_REQUIRE_TEST_PROVENANCE: ${{ inputs.require-test-provenance }}
         WINGBOX_TEST_STEP_OUTCOME: ${{ inputs.test-step-outcome }}
+        WINGBOX_PACKAGE: ${{ inputs.package }}
         WINGBOX_TOKEN: ${{ inputs.github-token }}
     - name: Upload the map
       if: ${{ !cancelled() && inputs.upload-map == 'true' && steps.check.outputs.map != '' }}
@@ -196,3 +206,4 @@ runs:
         WINGBOX_HEAD: ${{ inputs.head }}
         WINGBOX_TEST_STEP_OUTCOME: ${{ inputs.test-step-outcome }}
         WINGBOX_TEST_COMMAND: ${{ inputs.test-command }}
+        WINGBOX_PACKAGE: ${{ inputs.package }}

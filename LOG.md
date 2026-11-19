@@ -1,5 +1,71 @@
 # Log
 
+## 2026-11-19: an evidence package, built and checked by a command (issue #24)
+
+What changed
+
+- `wingbox_package.py` (new, pure, standard library only, no import of another module of this repository):
+  safe member names (`unsafe`, `safe_name`); the archive in one fixed form (`archive`, and `read`, which
+  refuses a link, a compressed member, a comment and bytes outside the members); a schema check
+  (`schema_problems`); the manifest (`manifest`, computed from the bytes of the members and what was given:
+  retention, stated versions, the policy files asked for, the job log name); `checks` (one outcome per
+  required test, per test that uses what changed and per case); `verify`; `review` and `with_review`;
+  `git_wanted` and `git_problems` (the comparison with a repository, given the digests); `result` and `lines`.
+- `wingbox_evidence_cli.py` (new, the I/O): `pack`, `verify`, `review`; exit status 0, 1, 2. It reads files,
+  asks git with `git cat-file` (`-e` for a commit, `blob` for a file), reads the clock only for a review
+  without `--time`, and writes the archive (`pack`: a new file only; `review`: beside the old one, then in
+  its place).
+- `schema/wingbox-package-1.schema.json`, `schema/wingbox-review-1.schema.json`.
+- `wingbox_pr.write_package`: with `WINGBOX_PACKAGE` true both entry scripts pack the run folder after the
+  record is written, also for a check that did not run; the outputs `package` and `package-state`, in GitLab
+  `WINGBOX_PACKAGE_STATE` in `wingbox.env`. `action.yml`: the input `package` and the two outputs. Both
+  GitLab templates name the variable; the template for shell runners hands it to the container.
+- `.github/workflows/test.yml`: the job `package` (Linux, macOS, Windows): the action with `package: true` on
+  the fixture repository, `verify --repo`, the package built again by hand and compared byte for byte, a
+  review, `verify` again.
+- Tests REQ-ACTION-170..189 (`tests/test_package.py`).
+
+Why
+
+- Issue #24: a run left three loose files; nothing gathered what the record refers to, listed what a
+  complete package holds, or verified one. The rules of sealing follow the design of the evidence layer: a
+  manifest that covers every member and holds neither its own digest nor a signature, reviews as separate
+  records that name the manifest digest, safe handling of archives.
+
+Decisions where the issue was open
+
+- Members are stored without compression: deflate may give other bytes with another zlib, and the same
+  inputs must give the same bytes on every machine. The archive form is written and read by this module, not
+  by the zipfile module, whose defaults differ by platform.
+- `verify` accepts only that form. An archive that was unpacked and packed again by another tool is refused
+  as `archive`, also when its members are intact.
+- The time in the manifest is the record's `generated`; `pack` reads no clock.
+- The policy files are taken from `subject.checked` of the record (the head when the record names no checked
+  commit). Which files: the four with a fixed place, the ones `policy.changed` names, `tests.manifest.path`,
+  and the ones named with `--policy` and `--workflow`. A file the commit does not have is listed as
+  `not-in-commit` and is not a defect; a commit that cannot be read makes the package incomplete.
+- Required members follow from the record: its documents and its test reports, each with the digest the
+  record gives. The job log is optional.
+- The manifest holds what no member holds as stated: `retention`, `stated`, the list of policy files asked
+  for. `verify` keeps them as said; an edit of them is caught only with `--manifest-sha256`.
+- `review` records a decision only about a package that verifies; an incomplete one can be reviewed.
+- An incomplete package fails the step of the action and the GitLab job.
+- `control` is marked `"mapping": "none"` with empty values: there is no control mapping yet (#22).
+
+Not done
+
+- No signing and no attestation: the member name `attestation/manifest.json.attestation` is reserved and
+  named in the manifest; `verify` reports a member there as present and not checked.
+- The action does not pack a job log (a job has no access to its own log) and has no input for the
+  retention or the stated versions; `pack --job-log`, `--retention` and `--stated` do it by hand.
+- The step of the action that records a check that did not run has no working directory (REQ-ACTION-136: it
+  must start also when that folder is not there), so its package reads the commit from the workspace folder:
+  with another `working-directory` that package is incomplete (`policy-files` absent), and says so.
+- No command unpacks a package. Nothing reads a record of version 1: its package says the record is
+  `unreadable`.
+- Retention classes, redaction and restore of an old package (the design issue on sealing) are not part of
+  this change.
+
 ## 2026-11-19: separate verdicts and `eligible` (issue #19)
 
 What changed
