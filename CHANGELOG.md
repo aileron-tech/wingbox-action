@@ -1,9 +1,10 @@
 # Changelog
 
-## Unreleased
+## 1.6.0 - 2026-11-19
 
 ### Changes
 
+- The default Wingbox release is 0.16.0.
 - An evidence package: with `package: true` (in GitLab `WINGBOX_PACKAGE: "true"`)
   a run also writes `wingbox-package.zip` (output `package`, with
   `package-state`; in GitLab in `wingbox-out/`, with `WINGBOX_PACKAGE_STATE`):
