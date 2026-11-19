@@ -340,6 +340,67 @@ and a `Test...` function of the file that no report names is a case
 report, is refused and named. `require-tests` is separate from `fail-on`: it
 does not change the result of the boundary check.
 
+### Where a test report comes from
+
+A report file proves what it holds, not where it comes from. The action
+judges each report by what the job knows and refuses one that contradicts
+it. A refused report counts as no evidence: its cases are left out, the plan
+names it (`test-report-refused`, with the reasons), so do the comment and the
+record, and the output `test-reports-refused` counts it. A report is refused
+when:
+
+- it is a file tracked by git: a report of this run is written by the test
+  step, not committed;
+- it was last modified, or one of its suites states a timestamp,
+  before the start of the run. On GitHub the start is the start of the job
+  (the moment the runner wrote the event file of the job). On GitLab it is
+  the creation of the pipeline, with five minutes of tolerance for the other
+  clock. By hand it is not known and nothing is compared. A timestamp
+  without a zone is read both as UTC and as the local time of the runner,
+  and refused only when both are before the start;
+- it names a commit other than the commit checked: a property or an
+  attribute of a suite called `commit`, `git.commit`, `revision`, `sha`,
+  `GITHUB_SHA` or `CI_COMMIT_SHA`, of 7 to 64 hexadecimal digits;
+- its sidecar (below) differs or cannot be read.
+
+The record states for each report its SHA-256, the timestamp it states, the
+modification time of the file, whether git tracks it, the commits it names
+and the state of its sidecar; and once for the run the provider, the run,
+the attempt and the job (`run`), the commit checked, the start of the run
+and the test command (`tests.provenance`). The test command is the input
+`test-command`: recorded verbatim, never run.
+
+```yaml
+      - uses: aileron-tech/wingbox-action@v1
+        with:
+          test-results: test-results/*.xml
+          test-command: python -P -m pytest --junitxml=test-results/junit.xml
+```
+
+The strict form: the test step writes a sidecar beside each report, named
+`<report>.run.json`:
+
+```json
+{"commit": "<sha>", "run-id": "9000000001", "attempt": "1", "command": "python -P -m pytest --junitxml=test-results/junit.xml", "sha256": "<digest>"}
+```
+
+`commit` is the commit the tests ran on (`git rev-parse HEAD`), `run-id` and
+`attempt` are `GITHUB_RUN_ID` and `GITHUB_RUN_ATTEMPT` (in GitLab
+`CI_PIPELINE_ID` and an empty attempt), and `sha256` is the SHA-256 of the
+report file. A sidecar matches when these are what the job itself knows.
+With `require-test-provenance: true` a report without a sidecar is refused.
+A sidecar that matches and names this run stands in for the comparison of
+times: a report made by an earlier job of the same run and handed over as an
+artifact is older than this job on GitHub, and is accepted with its sidecar.
+
+```yaml
+      - run: python -P -m pytest --junitxml=test-results/junit.xml
+      - if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          printf '{"commit": "%s", "run-id": "%s", "attempt": "%s", "command": "%s", "sha256": "%s"}\n' "$(git rev-parse HEAD)" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "python -P -m pytest" "$(sha256sum test-results/junit.xml | cut -d ' ' -f 1)" > test-results/junit.xml.run.json
+```
+
 ### Required tests
 
 The tests the graph finds are those that use what changed. To say which tests
@@ -407,8 +468,8 @@ control. It holds the repository and the run, the base, the head, the commit
 that was checked, the result with its reasons, the counts, the changed files
 with their SHA-256, the tests to run and the required tests with their
 evidence and every recorded case, the manifest of required tests as it was
-read, the test reports, and the SHA-256 of the report and of the plan written
-beside it. Its shape is
+read, the test reports with where each comes from, and the SHA-256 of the
+report and of the plan written beside it. Its shape is
 [`schema/wingbox-evidence-2.schema.json`](schema/wingbox-evidence-2.schema.json)
 (`"schema": "wingbox-evidence/2"`); a record of 1.4 says `wingbox-evidence/1`
 and follows [`schema/wingbox-evidence-1.schema.json`](schema/wingbox-evidence-1.schema.json).
@@ -452,6 +513,8 @@ same pull request always gives the same diagram.
 | `test-results` | none | Glob patterns of the JUnit XML reports the test step of the job wrote, one per line (`**` crosses folders). See [Evidence that the tests ran](#evidence-that-the-tests-ran). |
 | `require-tests` | `false` | `true`: fail the job unless every test that uses what changed, and every required test, is `passed` in `test-results`. `strict`: as `true`, and fail a change of source code for which no test was found. |
 | `required-tests` | `.wingbox/required-tests.yaml` | Path of the manifest of required tests, from the root of the repository. See [Required tests](#required-tests). |
+| `test-command` | none | The command of the test step that wrote the test results. Recorded verbatim in the evidence record; not run. |
+| `require-test-provenance` | `false` | Refuse a test report without a matching sidecar. See [Where a test report comes from](#where-a-test-report-comes-from). |
 | `github-token` | `github.token` | Token for the comment. |
 
 ## Outputs
@@ -475,6 +538,7 @@ same pull request always gives the same diagram.
 | `tests-evidence` | The test evidence in one word: `none`, `none-found`, `complete`, `incomplete` or `failed`. |
 | `tests-required` | Number of tests the manifest of required tests names for this change. |
 | `tests-required-passed` | Number of those required tests that are `passed`; empty without test results. |
+| `test-reports-refused` | Number of test reports that were refused and do not count as evidence; empty without test results. |
 
 ## GitLab CI
 
@@ -508,8 +572,8 @@ What it leaves:
   `WINGBOX_RESULT` (PASS, FAIL, UNKNOWN, NOT_APPLICABLE), `WINGBOX_EXECUTION`, `WINGBOX_REASONS`,
   `WINGBOX_TESTS_TO_RUN`, `WINGBOX_TESTS_PASSED`, `WINGBOX_TESTS_FAILED`,
   `WINGBOX_TESTS_WITHOUT_RECORD`, `WINGBOX_TESTS_EVIDENCE`, `WINGBOX_TESTS_REQUIRED`,
-  `WINGBOX_TESTS_REQUIRED_PASSED`, `WINGBOX_INTRODUCED_FINDINGS`, `WINGBOX_UNTOUCHED_DEPENDENTS`
-  and `WINGBOX_NOT_CHECKED_PARTS`;
+  `WINGBOX_TESTS_REQUIRED_PASSED`, `WINGBOX_TEST_REPORTS_REFUSED`, `WINGBOX_INTRODUCED_FINDINGS`,
+  `WINGBOX_UNTOUCHED_DEPENDENTS` and `WINGBOX_NOT_CHECKED_PARTS`;
 - one note on the merge request, updated on each push, when the CI/CD variable
   `WINGBOX_GITLAB_TOKEN` holds a project access token with the `api` scope (mask the variable).
   The job token cannot write notes; without the variable the report stays in the log and the
@@ -527,6 +591,8 @@ wingbox:
     WINGBOX_TEST_RESULTS: "test-results/*.xml"   # JUnit XML reports of the tests this job ran before the check
     WINGBOX_REQUIRE_TESTS: "true"                # fail unless every test that uses what changed and every required test passed; or "strict"
     WINGBOX_REQUIRED_TESTS: "ci/required-tests.yaml"   # the manifest of required tests; default .wingbox/required-tests.yaml
+    WINGBOX_TEST_COMMAND: "pytest --junitxml=test-results/junit.xml"   # recorded verbatim, not run
+    WINGBOX_REQUIRE_TEST_PROVENANCE: "true"      # refuse a test report without a matching sidecar
 ```
 
 The check runs in the `script` of the job; to hand over test reports, run the tests in

@@ -28,7 +28,9 @@
         "repository": {"type": "string"},
         "change": {"type": "string", "description": "The number of the pull or merge request; empty outside one."},
         "id": {"type": "string"},
-        "url": {"type": "string"}
+        "url": {"type": "string"},
+        "attempt": {"type": "string", "description": "The attempt of the run (GitHub: a re-run has the same id and the next attempt); empty when the system has none."},
+        "job": {"type": "string", "description": "The job of the run that ran the check; empty when not known."}
       }
     },
     "subject": {
@@ -149,13 +151,39 @@
             "errors": {"type": "array", "items": {"type": "string"}, "description": "Why the manifest was refused; what the change must pass is then not known."}
           }
         },
+        "provenance": {
+          "type": "object",
+          "description": "What the job knows of itself, the test reports were judged by.",
+          "additionalProperties": false,
+          "required": ["commit", "started", "run", "attempt", "command", "sidecar-required"],
+          "properties": {
+            "commit": {"type": "string", "description": "The commit checked; empty for a working directory."},
+            "started": {"type": "string", "description": "The start of the run as the job knows it, UTC; empty when not known. GitHub: the start of the job. GitLab: the creation of the pipeline."},
+            "run": {"type": "string", "description": "The run a sidecar must name (GitHub: the run id; GitLab: the pipeline id); empty when not known."},
+            "attempt": {"type": "string"},
+            "command": {"type": "string", "description": "The test command the job states (input test-command), verbatim."},
+            "sidecar-required": {"type": "boolean", "description": "Whether a report without a sidecar is refused (input require-test-provenance)."}
+          }
+        },
         "reports": {
           "type": "array",
           "items": {
             "type": "object",
             "additionalProperties": false,
             "required": ["path", "sha256", "cases"],
-            "properties": {"path": {"type": "string"}, "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "cases": {"type": "integer"}}
+            "properties": {
+              "path": {"type": "string"},
+              "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+              "cases": {"type": "integer"},
+              "status": {"type": "string", "enum": ["accepted", "refused"], "description": "refused: the report does not count as evidence; its cases were left out."},
+              "reasons": {"type": "array", "items": {"type": "string"}, "description": "Why the report was refused."},
+              "timestamp": {"type": "string", "description": "The earliest timestamp a suite of the report states, as written; empty when it states none."},
+              "modified": {"type": "string", "description": "The modification time of the file, UTC."},
+              "tracked": {"type": "string", "enum": ["tracked", "untracked", "unknown"], "description": "Whether git tracks the file; unknown outside a git work tree."},
+              "commits": {"type": "array", "items": {"type": "string"}, "description": "The commits the report names in a property or an attribute."},
+              "sidecar": {"type": "string", "enum": ["none", "matches", "differs", "unreadable"], "description": "The state of <report>.run.json beside the report."},
+              "sidecar-command": {"type": "string", "description": "The test command the sidecar states."}
+            }
           }
         }
       }

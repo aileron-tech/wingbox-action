@@ -33,9 +33,11 @@ wingbox:
       --env WINGBOX_VERSION --env WINGBOX_ACTION_REF --env WINGBOX_HOPS --env WINGBOX_FAIL_ON
       --env WINGBOX_PATHS --env WINGBOX_BASE --env WINGBOX_HEAD --env WINGBOX_COMMENT --env WINGBOX_GITLAB_TOKEN
       --env WINGBOX_TEST_RESULTS --env WINGBOX_REQUIRE_TESTS --env WINGBOX_REQUIRED_TESTS --env WINGBOX_TEST_RESULTS_ROOT=/repo
+      --env WINGBOX_TEST_COMMAND --env WINGBOX_REQUIRE_TEST_PROVENANCE
       --env CI_PIPELINE_SOURCE --env CI_COMMIT_SHA --env CI_COMMIT_BEFORE_SHA
       --env CI_MERGE_REQUEST_DIFF_BASE_SHA --env CI_MERGE_REQUEST_IID --env CI_PROJECT_ID --env CI_API_V4_URL
-      --env CI_PROJECT_PATH --env CI_JOB_ID --env CI_JOB_URL
+      --env CI_PROJECT_PATH --env CI_JOB_ID --env CI_JOB_URL --env CI_JOB_NAME
+      --env CI_PIPELINE_ID --env CI_PIPELINE_CREATED_AT --env CI_JOB_STARTED_AT
       "$WINGBOX_IMAGE" sh -ec '
       python -P -m venv /tmp/venv;
       /tmp/venv/bin/python -P -m pip install --disable-pip-version-check --quiet "wingbox[all]==$WINGBOX_VERSION";

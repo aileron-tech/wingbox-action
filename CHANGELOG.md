@@ -27,6 +27,24 @@
   `incomplete`, `failed`), `tests-required` and `tests-required-passed`; in
   GitLab `WINGBOX_TESTS_EVIDENCE`, `WINGBOX_TESTS_REQUIRED` and
   `WINGBOX_TESTS_REQUIRED_PASSED`.
+- A test report is judged by what the job knows, and refused when it
+  contradicts it: a file tracked by git, a file modified or a suite dated
+  before the start of the run, a report that names another commit than the
+  commit checked. A refused report counts as no evidence; the plan
+  (`test-report-refused`), the comment, the record and the new output
+  `test-reports-refused` name it with the reasons. On GitHub the start of the
+  run is the start of the job: a report made by an earlier job of the same
+  run needs its sidecar.
+- The record names the attempt and the job of the run (`run.attempt`,
+  `run.job`), and for the test reports the commit checked, the start of the
+  run and the test command (`tests.provenance`); each report carries its
+  status, the timestamp it states, its modification time, whether git tracks
+  it, the commits it names and the state of its sidecar. The plan has
+  `test-provenance`, `test-command` and `test-report-origin` lines.
+- New input `test-command`: the command of the test step, recorded verbatim.
+- New input `require-test-provenance`: a report without a matching sidecar
+  (`<report>.run.json`: commit, run id, attempt, command, SHA-256 of the
+  report) is refused. A sidecar that differs is refused in any case.
 - `require-tests: strict`: as `true`, and a change of source code for which
   no test was found fails the job. With `true` such a change passes and the
   log says that no test was found.

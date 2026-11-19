@@ -23,14 +23,14 @@ from test_wingbox_pr import report  # noqa: E402
 
 SCHEMA = json.loads((ROOT / "schema" / "wingbox-evidence-2.schema.json").read_text(encoding="utf-8"))
 RUN = we.Run("github", "owner/repo", "12", "7", "https://github.com/owner/repo/actions/runs/7", "v1", "2026-01-02T03:04:05Z")
-TYPES = {"object": dict, "array": list, "string": str, "integer": int}
+TYPES = {"object": dict, "array": list, "string": str, "integer": int, "boolean": bool}
 
 
 def problems(value: object, schema: dict, where: str = "$") -> list[str]:
     """What of the schema (the part of JSON Schema it uses) the value does not meet."""
     found = []
     expected = TYPES[schema["type"]]
-    if not isinstance(value, expected) or isinstance(value, bool):
+    if not isinstance(value, expected) or (isinstance(value, bool) and expected is not bool):
         return [f"{where}: not {schema['type']}"]
     if "enum" in schema and value not in schema["enum"]:
         found.append(f"{where}: {value!r} is not one of {schema['enum']}")
@@ -60,7 +60,7 @@ class RecordTest(unittest.TestCase):
         self.assertEqual("wingbox-evidence/2", record["schema"])
         self.assertEqual({"base": "a" * 40, "head": "b" * 40, "checked": "c" * 40, "tree": "merge", "differs": []}, record["subject"])
         self.assertEqual({"provider": "github", "repository": "owner/repo", "change": "12", "id": "7",
-                          "url": "https://github.com/owner/repo/actions/runs/7"}, record["run"])
+                          "url": "https://github.com/owner/repo/actions/runs/7", "attempt": "", "job": ""}, record["run"])
         self.assertEqual("FAIL", record["result"]["boundaries"])
         self.assertEqual([{"path": "src/models/order.ts", "sha256": "f" * 64}], record["files"])
         self.assertEqual("incomplete", record["tests"]["evidence"])

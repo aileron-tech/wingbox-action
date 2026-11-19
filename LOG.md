@@ -1,5 +1,48 @@
 # Log
 
+## 2026-11-19: where a test report comes from (issue #17)
+
+What changed
+
+- `wingbox_tests.py`: `parse_report` gives, beside the cases, what a report states (`Stated`: the
+  timestamps of its suites, the commits named by a property or an attribute); `Sidecar`, `parse_sidecar`,
+  `sidecar_name`, `sidecar_state`; `Origin` (what the job knows: commit checked, start of the run and its
+  tolerance, run, attempt, test command, sidecar required, UTC offset of the machine); `refusals` (tracked
+  by git, sidecar differs or is missing where required, modified or dated before the start, another
+  commit); `TestReport` carries the refusal and the provenance. `parse_junit` is `parse_report(...)[0]`.
+- `wingbox_pr.py`: `run_started` (GitHub: the modification time of the event file of the job; GitLab:
+  `CI_PIPELINE_CREATED_AT`, else `CI_JOB_STARTED_AT`, with 300 s of tolerance), `test_origin`,
+  `tracked_files` (`git ls-files`), `read_sidecar`, `utc`; `read_test_results(folder, patterns, origin)`
+  judges each report and leaves the cases of a refused one out (without an origin it reads as before);
+  a pattern never takes a `.run.json` file for a report; `github_run` reads `GITHUB_RUN_ATTEMPT` and
+  `GITHUB_JOB`, `gitlab_run` `CI_JOB_NAME`.
+- `wingbox_evidence.py`: `Run.attempt`, `Run.job`; `run.attempt`, `run.job`, `tests.provenance` and the
+  provenance of each report in the record (additions to schema version 2). `wingbox_report.py`: plan
+  lines `test-provenance`, `test-command`, `test-report-refused`, `test-report-origin`; the comment names
+  refused reports; output `test-reports-refused`.
+- Inputs `test-command`, `require-test-provenance`; the shell-runner template hands over
+  `WINGBOX_TEST_COMMAND`, `WINGBOX_REQUIRE_TEST_PROVENANCE`, `CI_PIPELINE_ID`, `CI_PIPELINE_CREATED_AT`,
+  `CI_JOB_STARTED_AT` and `CI_JOB_NAME`.
+- Tests REQ-ACTION-130..134 (`tests/test_report_provenance.py`).
+
+Expectations of existing tests that changed with the behaviour
+
+- REQ-ACTION-102: `run` of the record has `attempt` and `job`.
+- The validator of `tests/test_evidence_record.py` reads the JSON Schema type `boolean`
+  (`tests.provenance.sidecar-required`).
+
+Why
+
+- Issue #17: a report written for another commit, by an earlier attempt or long ago, or committed to the
+  repository, gave the same `passed` evidence as the report of the test step of the run.
+
+Not done
+
+- GitHub gives a job no time for the start of the run, so the start is that of the job: a report of an
+  earlier job of the same run is refused unless its sidecar names the run.
+- The test command of a sidecar is recorded and not compared with `test-command`.
+- The host a report names is not recorded.
+
 ## 2026-11-19: no test found is `none-found`; a manifest of required tests (issue #16)
 
 What changed

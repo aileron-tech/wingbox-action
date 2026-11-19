@@ -31,6 +31,8 @@ class Run:
     url: str             # the address of the run or the job; "" when not known
     action_ref: str      # the tag, branch or commit of this action that ran; "" when not known
     generated: str       # UTC time of the record, YYYY-MM-DDTHH:MM:SSZ
+    attempt: str = ""    # the attempt of the run (GitHub: a re-run has the same run and the next attempt); "" when the system has none
+    job: str = ""        # the job of the run that ran the check; "" when not known
 
 
 def _test_record(item: Optional[wingbox_tests.Evidence]) -> dict[str, object]:
@@ -49,12 +51,14 @@ def build_evidence(report: Report, run: Run, documents: dict[str, str]) -> dict[
     recorded = {item.test: item for item in found or ()}
     needed = required_evidence(report)
     manifest = report.tests_manifest
+    origin = report.test_origin or wingbox_tests.Origin()
     tree = report.tree
     return {
         "schema": SCHEMA,
         "generated": run.generated,
         "tool": {"name": "wingbox-action", "ref": run.action_ref, "wingbox": report.version},
-        "run": {"provider": run.provider, "repository": run.repository, "change": run.change, "id": run.run_id, "url": run.url},
+        "run": {"provider": run.provider, "repository": run.repository, "change": run.change, "id": run.run_id, "url": run.url,
+                "attempt": run.attempt, "job": run.job},
         "subject": {"base": report.base, "head": report.head, "checked": tree.commit if tree is not None else "",
                     "tree": tree.relation if tree is not None else "unknown",
                     "differs": list(tree.differs) if tree is not None else []},
@@ -71,7 +75,12 @@ def build_evidence(report: Report, run: Run, documents: dict[str, str]) -> dict[
             "manifest": {"path": manifest.path if manifest else "", "source": manifest.source if manifest else "none",
                          "commit": manifest.commit if manifest else "", "sha256": manifest.sha256 if manifest else "",
                          "errors": list(manifest.errors) if manifest else []},
-            "reports": [{"path": read.path, "sha256": read.sha256, "cases": read.cases} for read in report.test_reports],
+            "provenance": {"commit": origin.commit, "started": origin.started, "run": origin.run_id, "attempt": origin.attempt,
+                           "command": origin.command, "sidecar-required": origin.require_sidecar},
+            "reports": [{"path": read.path, "sha256": read.sha256, "cases": read.cases, "status": "refused" if read.refused else "accepted",
+                         "reasons": list(read.refused), "timestamp": read.timestamp, "modified": read.modified, "tracked": read.tracked,
+                         "commits": list(read.commits), "sidecar": read.sidecar, "sidecar-command": read.sidecar_command}
+                        for read in report.test_reports],
         },
         "documents": [{"name": name, "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest()} for name, text in sorted(documents.items())],
     }
