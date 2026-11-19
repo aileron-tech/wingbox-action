@@ -23,7 +23,7 @@ wingbox:
     WINGBOX_HOPS: "2"
     WINGBOX_FAIL_ON: "none"           # none, violations, not-checked or strict
   script:
-    - pip install --disable-pip-version-check --quiet "wingbox==$WINGBOX_VERSION"
+    - pip install --disable-pip-version-check --quiet "wingbox[all]==$WINGBOX_VERSION"
     - WINGBOX_TOOLS="$(mktemp -d)"
     - git clone --quiet https://github.com/aileron-tech/wingbox-action.git "$WINGBOX_TOOLS/action"
     - git -C "$WINGBOX_TOOLS/action" checkout --quiet "$WINGBOX_ACTION_REF"

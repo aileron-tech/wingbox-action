@@ -35,8 +35,8 @@ wingbox:
       --env CI_PIPELINE_SOURCE --env CI_COMMIT_SHA --env CI_COMMIT_BEFORE_SHA
       --env CI_MERGE_REQUEST_DIFF_BASE_SHA --env CI_MERGE_REQUEST_IID --env CI_PROJECT_ID --env CI_API_V4_URL
       "$WINGBOX_IMAGE" sh -ec '
-      python -m venv /tmp/venv;
-      /tmp/venv/bin/python -m pip install --disable-pip-version-check --quiet "wingbox==$WINGBOX_VERSION";
+      python -P -m venv /tmp/venv;
+      /tmp/venv/bin/python -P -m pip install --disable-pip-version-check --quiet "wingbox[all]==$WINGBOX_VERSION";
       git -c init.defaultBranch=main clone --quiet https://github.com/aileron-tech/wingbox-action.git /tmp/action;
       git -C /tmp/action checkout --quiet "$WINGBOX_ACTION_REF";
       git -c init.defaultBranch=main clone --quiet --no-checkout /repo /tmp/work;

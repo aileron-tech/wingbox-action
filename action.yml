@@ -7,7 +7,7 @@ branding:
 
 inputs:
   version:
-    description: The wingbox release installed from PyPI.
+    description: The wingbox release installed from PyPI, with the parser of every language.
     default: "0.11.0"
   hops:
     description: How far dependents are followed from each changed file.
@@ -82,7 +82,7 @@ runs:
         update-environment: false
     - name: Install wingbox
       shell: bash
-      run: '"$WINGBOX_PYTHON" -m pip install --disable-pip-version-check --quiet "wingbox==$WINGBOX_VERSION"'
+      run: '"$WINGBOX_PYTHON" -P -m pip install --disable-pip-version-check --quiet "wingbox[all]==$WINGBOX_VERSION"'
       env:
         WINGBOX_PYTHON: ${{ steps.python.outputs.python-path }}
         WINGBOX_VERSION: ${{ inputs.version }}

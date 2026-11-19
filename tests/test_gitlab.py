@@ -114,7 +114,7 @@ class HandOnTest(unittest.TestCase):
         default = re.search(r'version:\n(?:.*\n)*?\s+default: "([0-9.]+)"', action).group(1)
         for name in ("wingbox.gitlab-ci.yml", "wingbox-shell.gitlab-ci.yml"):
             text = (ROOT / "gitlab" / name).read_text(encoding="utf-8")
-            for needed in ('GIT_DEPTH: "0"', 'pip install', '"wingbox==$WINGBOX_VERSION"', "wingbox_gitlab.py", 'WINGBOX_ACTION_REF: "v1"',
+            for needed in ('GIT_DEPTH: "0"', 'pip install', '"wingbox[all]==$WINGBOX_VERSION"', "wingbox_gitlab.py", 'WINGBOX_ACTION_REF: "v1"',
                            'checkout --quiet "$WINGBOX_ACTION_REF"', "merge_request_event", "$CI_DEFAULT_BRANCH", "wingbox-out/",
                            "dotenv: wingbox-out/wingbox.env", f'WINGBOX_VERSION: "{default}"'):
                 self.assertIn(needed, text, name)
@@ -158,7 +158,7 @@ class BuildFailureTest(unittest.TestCase):
         answers = {"build": 1, "boundaries": 1}
 
         def fake_run(argv: list[str], cwd: str):
-            command = argv[3] if argv[1:3] == ["-m", "wingbox"] else argv[0]
+            command = argv[4] if argv[1:4] == ["-P", "-m", "wingbox"] else argv[0]
             return subprocess.CompletedProcess(argv, answers.get(command, 0), "", "No module named wingbox")
         real_run, pr._run = pr._run, fake_run
         try:

@@ -64,6 +64,9 @@ from wingbox_report import (  # noqa: E402,F401
 
 # Wingbox commands that ended abnormally in this run: the result is then UNKNOWN, never a pass.
 TOOL_ERRORS: list[str] = []
+# Languages a build left out because their parser is not installed (name -> files): the result is then UNKNOWN.
+SKIPPED_LANGUAGES: dict[str, int] = {}
+_SKIPPED_LANGUAGE = re.compile(r"\(skipped-language (\S+) :files (\d+)")
 
 
 def _run(argv: list[str], cwd: str) -> subprocess.CompletedProcess[str]:
@@ -71,7 +74,11 @@ def _run(argv: list[str], cwd: str) -> subprocess.CompletedProcess[str]:
 
 
 def _wingbox(cwd: str, *args: str) -> list[str]:
-    done = _run([sys.executable, "-m", "wingbox", *args], cwd)
+    # -P: the command runs in the checked repository, and `python -m` would put that folder first on the module
+    # search path, so a folder `wingbox/` of the repository would run in place of the installed Wingbox.
+    done = _run([sys.executable, "-P", "-m", "wingbox", *args], cwd)
+    for name, files in _SKIPPED_LANGUAGE.findall(f"{done.stderr}\n{done.stdout}"):
+        SKIPPED_LANGUAGES[name] = max(SKIPPED_LANGUAGES.get(name, 0), int(files))
     # A query may end with 1 or 2 (boundaries found violations, a name is unknown); a build must end with 0:
     # without a graph every later answer is empty, and an empty answer reads as "nothing to check".
     if done.returncode not in ((0,) if args[:1] == ("build",) else (0, 1, 2)):
@@ -229,7 +236,7 @@ def collect(root: str, base: str, head: str, hops: int, patterns: list[str], ver
     final = tuple(final_list)
     return Report(version, hops, base, head, final, tuple(new), resolved, tuple(not_checked), tuple(skipped),
                   tests_changed=bent, tool_errors=tuple(dict.fromkeys(TOOL_ERRORS)), hashes=tuple(hashes),
-                  checked_modules=checked_modules(head_lines))
+                  checked_modules=checked_modules(head_lines), skipped_languages=tuple(sorted(SKIPPED_LANGUAGES.items())))
 
 
 def copy_map(root: str, folder: str) -> str:

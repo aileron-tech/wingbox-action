@@ -122,25 +122,27 @@ def untouched_count(report: Report) -> int:
 
 def needs_comment(report: Report) -> bool:
     """A pull request that changes no source module of the graph other than tests gets no comment, unless a
-    wingbox command failed: then the comment says the change could not be checked."""
+    wingbox command failed or a language was left out: then the comment says what could not be checked."""
     return (any(c.module is not None and not is_test(c.path) for c in report.changed) or bool(report.introduced)
-            or bool(report.tool_errors))
+            or bool(report.tool_errors) or bool(report.skipped_languages))
 
 
 def result(report: Report) -> tuple[str, str, tuple[str, ...]]:
     """(result, execution status, reasons) of the boundary check of a pull request.
 
     The result never reads what was not checked as a pass. FAIL: the pull request introduces a blocking
-    finding. UNKNOWN: a wingbox command ended abnormally (execution "error"), or a part of the repository was
-    not checked. NOT_APPLICABLE: no source module outside the tests changed. PASS: none of these."""
+    finding. UNKNOWN: a wingbox command ended abnormally (execution "error"), files of a language were left out of
+    the graph (its parser is not installed), or a part of the repository was not checked. NOT_APPLICABLE: no source module outside the tests changed. PASS: none of these."""
     execution = "error" if report.tool_errors else "ok"
     errors = tuple(f"tool-error: {error}" for error in report.tool_errors)
     unchecked = tuple(f"not-checked: {part.part} ({part.reason})" for part in report.not_checked)
+    left_out = tuple(f"skipped-language: {name} ({files} files)" for name, files in report.skipped_languages)
     blocking = sum(1 for finding in report.introduced if finding.head in BLOCKING_HEADS)
     if blocking:
-        return "FAIL", execution, (f"introduced-violations: {blocking}", *errors)
-    if errors:
-        return "UNKNOWN", execution, (*errors, *unchecked)
+        return "FAIL", execution, (f"introduced-violations: {blocking}", *errors, *left_out)
+    if errors or left_out:
+        # Before "no source module changed": the changed files may be of the language that was left out.
+        return "UNKNOWN", execution, (*errors, *left_out, *unchecked)
     if not needs_comment(report):
         return "NOT_APPLICABLE", execution, ("no-source-module-changed",)
     if unchecked:
@@ -382,6 +384,7 @@ def build_plan(report: Report) -> str:
     lines += [f"(run-test {_q(test.shown)} :uses {_atom(test.uses) if test.by_item else _q(test.uses)})" for test in tests_to_run(report)]
     lines += [f"(test-changed {_q(test)} :tests {_q(source)})" for test, source in report.tests_changed]
     lines += [f"(not-checked {_q(part.part)} :reason {_atom(part.reason)})" for part in report.not_checked]
+    lines += [f"(skipped-language {_atom(name)} :files {files})" for name, files in report.skipped_languages]
     if report.checked_modules is not None:
         lines.append(f"(checked :modules {report.checked_modules})")
     lines += [f"(changed-file {_q(path)} :sha256 {digest})" for path, digest in report.hashes]
@@ -418,10 +421,20 @@ def build_comment(report: Report, full: bool = False) -> str:
         problem = (f"**Wingbox** could not check this change{'' if _build_failed(report) else ' completely'}: "
                    f"{', '.join(_code(error) for error in report.tool_errors)}. "
                    "The result is UNKNOWN, not a pass; the job log has the tool's message.")
-        nothing_else = not any(c.module is not None and not is_test(c.path) for c in report.changed) and not report.introduced
-        if _build_failed(report) or nothing_else:
-            # Without a graph the usual report would be made of empty answers: say only that it was not checked.
-            return "\n".join([MARKER, problem, "", footer, ""])
+    nothing_else = not any(c.module is not None and not is_test(c.path) for c in report.changed) and not report.introduced
+    if report.skipped_languages:
+        # Files left out of the graph have no users and no findings in it: that must not read as "nothing uses this".
+        counts = [f"{files:,} {_LANGUAGES.get(name, name)} file{'' if files == 1 else 's'}" for name, files in report.skipped_languages]
+        listed = counts[0] if len(counts) == 1 else f"{', '.join(counts[:-1])} and {counts[-1]}"
+        one = len(counts) == 1 and report.skipped_languages[0][1] == 1
+        left_out = (f"**Not analysed**: {listed} {'was' if one else 'were'} not analysed, because the parser of that language "
+                    "is not installed in this run (install `wingbox[all]`). What uses them, and what they use, is not in "
+                    "this report. The result is UNKNOWN, not a pass.")
+        problem = f"{problem}\n\n{left_out}" if problem else left_out
+    if problem and (_build_failed(report) or nothing_else):
+        # Without a graph, or without a changed module in it, the usual report would be made of empty answers:
+        # say only what was not checked.
+        return "\n".join([MARKER, problem, "", footer, ""])
     found = uses(report)
     # A file whose changed lines were sorted into items speaks through those items; a file that was not looked
     # at, or in which code outside every item changed too, is spoken of as a whole.
@@ -564,6 +577,7 @@ def build_comment(report: Report, full: bool = False) -> str:
     return "\n".join(lines)
 
 
+_LANGUAGES = {"csharp": "C#", "java": "Java", "go": "Go", "ruby": "Ruby", "php": "PHP", "dart": "Dart"}
 _REASONS = {
     "declared-rules-not-read": "its declared rules could not be read",
     "style-undetermined": "its architecture style could not be determined",

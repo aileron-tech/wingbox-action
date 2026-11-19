@@ -131,6 +131,7 @@ class Report:
     tool_errors: tuple[str, ...] = field(default=())                 # wingbox commands that ended abnormally
     hashes: tuple[tuple[str, str], ...] = field(default=())          # (changed file, SHA-256 of its content at the head)
     checked_modules: Optional[int] = None                            # modules the boundary rules were checked on, when known
+    skipped_languages: tuple[tuple[str, int], ...] = field(default=())   # (language, files) left out: its parser is not installed
 
 
 # ---------------------------------------------------------------------------
