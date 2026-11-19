@@ -152,6 +152,7 @@ class Report:
     test_cases: Optional[tuple[Case, ...]] = None                    # the cases of the test reports given; None: none was given
     test_reports: tuple[TestReport, ...] = field(default=())         # the report files that were read
     test_report_errors: tuple[tuple[str, str], ...] = field(default=())   # (file or pattern, why it gave no cases)
+    test_functions: tuple[tuple[str, tuple[str, ...]], ...] = field(default=())   # (Go test to run, the functions Wingbox lists in it)
     checked_modules: Optional[int] = None                            # modules the boundary rules were checked on, when known
     skipped_languages: tuple[tuple[str, int], ...] = field(default=())   # (language, files) left out: its parser is not installed
 
@@ -267,6 +268,23 @@ def items(lines: list[str]) -> list[Item]:
                     methods = tuple(_unquote(token) for token in _TOKEN.findall(extra[1:-1])[1:])
             found.append(Item(args[1], head, int(args[2]), methods))
     return found
+
+
+def go_functions(lines: list[str]) -> Optional[tuple[str, ...]]:
+    """The functions of a Go file from `wingbox module <id>`, in the order of the file; None when the answer
+    is not about a module of the graph written in Go."""
+    go = False
+    names: list[str] = []
+    for line in lines:
+        parsed = parse_line(line)
+        if parsed is None:
+            continue
+        head, args, keys = parsed
+        if head == "node":
+            go = keys.get("lang") == "go"
+        elif head == "fn" and len(args) >= 2:
+            names.append(args[1])
+    return tuple(names) if go else None
 
 
 # The place of use to point at: a call before a use as a type before an import. An unresolved call is a call

@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+### Changes
+
+- Test evidence is kept per test case. The plan has a `test-case` line for
+  every case the test reports hold of a test to run (the test, where the
+  report puts the case, its name, its status), and the evidence record lists
+  the same under `records` of each test.
+- New status `partial` for a test to run: a case passed and another was
+  skipped or did not run. Its `run-test` line counts the cases by status, the
+  comment names it ("1 with a case skipped or not run"), the output
+  `tests-without-record` counts it and `require-tests` fails on it.
+- The evidence record is `wingbox-evidence/2`
+  (`schema/wingbox-evidence-2.schema.json`): each test to run gains `records`,
+  and its status may be `partial`.
+
+### Fixes
+
+- A test file with a passed and a skipped case was `passed`. A test is now
+  `passed` only when every case recorded for it passed.
+- One record of a Go package counted for every test file of its folder. A
+  record now goes to the file that holds its test function (Wingbox lists the
+  functions of each Go test file), a test function of the file that no report
+  names is a case `no-record`, and Go tests named as modules are matched too.
+
 ## 1.4.2 - 2026-11-19
 
 ### Changes

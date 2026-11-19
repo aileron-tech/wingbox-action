@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/aileron-tech/wingbox-action/blob/main/schema/wingbox-evidence-2.schema.json",
+  "title": "Wingbox evidence record, version 2",
+  "description": "What one run of the Wingbox pull request check looked at and found. Written as wingbox-evidence.json beside the report and the review plan.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "generated", "tool", "run", "subject", "result", "counts", "files", "tests", "documents"],
+  "properties": {
+    "schema": {"type": "string", "enum": ["wingbox-evidence/2"]},
+    "generated": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$", "description": "UTC time the record was written."},
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "ref", "wingbox"],
+      "properties": {
+        "name": {"type": "string", "enum": ["wingbox-action"]},
+        "ref": {"type": "string", "description": "The tag, branch or commit of the action that ran; empty when not known."},
+        "wingbox": {"type": "string", "description": "The Wingbox release that built the graph."}
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "repository", "change", "id", "url"],
+      "properties": {
+        "provider": {"type": "string", "enum": ["github", "gitlab", "local"]},
+        "repository": {"type": "string"},
+        "change": {"type": "string", "description": "The number of the pull or merge request; empty outside one."},
+        "id": {"type": "string"},
+        "url": {"type": "string"}
+      }
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["base", "head", "checked", "tree", "differs"],
+      "properties": {
+        "base": {"type": "string"},
+        "head": {"type": "string", "description": "The head commit named, or working-tree."},
+        "checked": {"type": "string", "description": "The commit of the files that were analysed; empty for a working directory."},
+        "tree": {"type": "string", "enum": ["head", "merge", "other", "working-tree", "unknown"], "description": "How the commit checked relates to the head: the head itself, its merge into the base, another commit."},
+        "differs": {"type": "array", "items": {"type": "string"}, "description": "Files of the working folder that were not as in the commit checked."}
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["boundaries", "execution", "reasons"],
+      "properties": {
+        "boundaries": {"type": "string", "enum": ["PASS", "FAIL", "UNKNOWN", "NOT_APPLICABLE"]},
+        "execution": {"type": "string", "enum": ["ok", "error"]},
+        "reasons": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["changed-files", "untouched-dependents", "introduced-findings", "not-checked-parts", "tests-to-run"],
+      "properties": {
+        "changed-files": {"type": "integer"},
+        "untouched-dependents": {"type": "integer"},
+        "introduced-findings": {"type": "integer"},
+        "not-checked-parts": {"type": "integer"},
+        "tests-to-run": {"type": "integer"}
+      }
+    },
+    "files": {
+      "type": "array",
+      "description": "The changed files the commit checked holds, each with the SHA-256 of its content in that commit.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "sha256"],
+        "properties": {"path": {"type": "string"}, "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+      }
+    },
+    "tests": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidence", "to-run", "reports"],
+      "properties": {
+        "evidence": {"type": "string", "enum": ["none", "complete", "incomplete", "failed"], "description": "none: no test report was given. failed: a test to run has a failed case. incomplete: one has a case that was skipped or did not run, or no record. complete: every recorded case of every test to run passed."},
+        "to-run": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["test", "status", "cases", "records"],
+            "properties": {
+              "test": {"type": "string"},
+              "status": {"type": "string", "enum": ["passed", "failed", "partial", "skipped", "no-record", "none"], "description": "passed: every recorded case passed. failed: a case failed. partial: a case passed and another was skipped or did not run. skipped: no case passed. no-record: the reports hold no case of it. none: no test report was given."},
+              "cases": {"type": "integer", "description": "The recorded cases that belong to the test."},
+              "records": {
+                "type": "array",
+                "description": "Each of those cases, then the test functions of the file that no report names (Go).",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["where", "name", "status"],
+                  "properties": {
+                    "where": {"type": "string", "description": "Where the report puts the case: its class name, else its file, else its suite."},
+                    "name": {"type": "string"},
+                    "status": {"type": "string", "enum": ["passed", "failed", "skipped", "no-record"]}
+                  }
+                }
+              }
+            }
+          }
+        },
+        "reports": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "sha256", "cases"],
+            "properties": {"path": {"type": "string"}, "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "cases": {"type": "integer"}}
+          }
+        }
+      }
+    },
+    "documents": {
+      "type": "array",
+      "description": "The files written beside the record, each with the SHA-256 of its text.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "sha256"],
+        "properties": {"name": {"type": "string"}, "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+      }
+    }
+  }
+}
