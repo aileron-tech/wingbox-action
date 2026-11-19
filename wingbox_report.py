@@ -17,6 +17,7 @@ from typing import Optional
 
 import wingbox_changes as changes
 import wingbox_diagram as diagram
+import wingbox_tests
 from wingbox_facts import BLOCKING_HEADS, MARKER, WORKING_TREE, ChangedFile, ChangedItem, Dependent, Report, Tree, User, folder_of
 
 FAIL_ON = ("none", "violations", "not-checked", "strict")
@@ -336,6 +337,66 @@ def tests_to_run(report: Report) -> list[TestToRun]:
     return sorted(found.values(), key=lambda test: test.shown)
 
 
+def test_evidence(report: Report) -> Optional[tuple[wingbox_tests.Evidence, ...]]:
+    """What the test reports given to the check hold about each test to run; None when none was given."""
+    if report.test_cases is None:
+        return None
+    return wingbox_tests.evidence([test.shown for test in tests_to_run(report)], list(report.test_cases))
+
+
+def evidence_counts(report: Report) -> tuple[str, str, str]:
+    """(tests to run with a passed record, with a failed one, without a passing record: skipped or no record),
+    as the text of the outputs; three empty texts when no test report was given."""
+    found = test_evidence(report)
+    if found is None:
+        return "", "", ""
+    passed = sum(1 for item in found if item.status == wingbox_tests.PASSED)
+    failed = sum(1 for item in found if item.status == wingbox_tests.FAILED)
+    return str(passed), str(failed), str(len(found) - passed - failed)
+
+
+def tests_status(report: Report, require: bool) -> int:
+    """1 when a passing record is required for every test to run and one has none (no test report was given,
+    or the test failed, was skipped or is not in the reports); else 0."""
+    if not require or not tests_to_run(report):
+        return 0
+    found = test_evidence(report)
+    return 0 if found is not None and all(item.status == wingbox_tests.PASSED for item in found) else 1
+
+
+def outputs(report: Report) -> dict[str, str]:
+    """The outputs of a run that are read from the report alone, by their names."""
+    outcome, execution, reasons = result(report)
+    passed, failed, without = evidence_counts(report)
+    return {"result": outcome, "execution": execution, "reasons": "; ".join(reasons),
+            "untouched-dependents": str(untouched_count(report)), "introduced-findings": str(len(report.introduced)),
+            "not-checked-parts": str(len(report.not_checked)), "tests-to-run": str(len(tests_to_run(report))),
+            "tests-passed": passed, "tests-failed": failed, "tests-without-record": without}
+
+
+def _evidence_words(recorded: tuple[wingbox_tests.Evidence, ...], full: bool) -> str:
+    """How the tests to run ended by the test reports: the passed counted, the others counted and named."""
+    def named(status: str) -> list[str]:
+        return [item.test for item in recorded if item.status == status]
+
+    def listed(names: list[str]) -> str:
+        shown = names if full else names[:TESTS_LIMIT]
+        return ", ".join(_code(name) for name in shown) + (f" and {len(names) - len(shown)} more" if len(names) > len(shown) else "")
+
+    said = []
+    passed, failed, skipped, none = (named(status) for status in (wingbox_tests.PASSED, wingbox_tests.FAILED, wingbox_tests.SKIPPED,
+                                                                  wingbox_tests.NO_RECORD))
+    if passed:
+        said.append(f"{len(passed)} passed")
+    if failed:
+        said.append(f"{len(failed)} FAILED ({listed(failed)})")
+    if skipped:
+        said.append(f"{len(skipped)} skipped ({listed(skipped)})")
+    if none:
+        said.append(f"{len(none)} without a record in the test report ({listed(none)})")
+    return ", ".join(said)
+
+
 def _whole_files(report: Report) -> set[str]:
     """The changed files spoken of as a whole: not looked at, or with code outside every item changed."""
     return {changed.path for changed in report.changed if changed.module is not None and (changed.items is None or changed.other_code)}
@@ -397,7 +458,13 @@ def build_plan(report: Report) -> str:
         elif changed.other_code:
             lines.append(f"(other-code {_q(changed.path)})")
     lines += [f"(look-module {_atom(use.module)} :why uses :file {_q(path)})" for use in direct for path in use.files]
-    lines += [f"(run-test {_q(test.shown)} :uses {_atom(test.uses) if test.by_item else _q(test.uses)})" for test in tests_to_run(report)]
+    recorded = {item.test: item for item in test_evidence(report) or ()}
+    for test in tests_to_run(report):
+        known = recorded.get(test.shown)
+        proof = "none" if report.test_cases is None or known is None else f"{known.status} :cases {known.cases}"
+        lines.append(f"(run-test {_q(test.shown)} :uses {_atom(test.uses) if test.by_item else _q(test.uses)} :evidence {proof})")
+    lines += [f"(test-report {_q(read.path)} :sha256 {read.sha256} :cases {read.cases})" for read in report.test_reports]
+    lines += [f"(test-report-error {_q(path)} :reason {_q(reason)})" for path, reason in report.test_report_errors]
     lines += [f"(test-changed {_q(test)} :tests {_q(source)})" for test, source in report.tests_changed]
     lines += [f"(not-checked {_q(part.part)} :reason {_atom(part.reason)})" for part in report.not_checked]
     lines += [f"(skipped-language {_atom(name)} :files {files})" for name, files in report.skipped_languages]
@@ -559,7 +626,14 @@ def build_comment(report: Report, full: bool = False) -> str:
     if to_run:
         shown_tests = to_run if full else to_run[:TESTS_LIMIT]
         rest = f" and {len(to_run) - len(shown_tests)} more (the job summary lists them all)" if len(to_run) > len(shown_tests) else ""
-        lines += [f"Tests that use what changed ({len(to_run)}): " + ", ".join(_code(test.shown) for test in shown_tests) + rest + ".", ""]
+        recorded = test_evidence(report)
+        if recorded is None:
+            lines += [f"Tests that use what changed ({len(to_run)}): " + ", ".join(_code(test.shown) for test in shown_tests) + rest + ".", ""]
+        else:
+            lines += [f"Tests that use what changed ({len(to_run)}): " + _evidence_words(recorded, full) + ".", ""]
+            if report.test_report_errors:
+                lines += ["Test reports that gave no cases: " + "; ".join(f"{_code(path)} ({reason})" for path, reason in report.test_report_errors)
+                          + ".", ""]
     if report.tests_changed:
         pairs = sorted(report.tests_changed) if full else sorted(report.tests_changed)[:LIST_LIMIT]
         rest = f"; {len(report.tests_changed) - len(pairs)} more" if len(report.tests_changed) > len(pairs) else ""

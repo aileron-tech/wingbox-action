@@ -1,5 +1,54 @@
 # Log
 
+## 2026-11-19: five review remarks (issues #7 to #11)
+
+What changed
+
+- #7: `wingbox_pr._wingbox` starts `python -P -m wingbox`; `action.yml` installs with `python -P -m pip`;
+  the shell-runner template uses `python -P -m venv` and `-P -m pip`. Tests REQ-ACTION-084, 085
+  (`tests/test_safe_start.py`): a repository with `wingbox/` and `pip/` that leave a mark when run, and a scan
+  of the scripts and workflow files for `-m` without `-P`.
+- #8: `_wingbox` reads `(skipped-language <name> :files N` from what a command prints (queries print it on
+  stderr) into `SKIPPED_LANGUAGES`; `Report.skipped_languages`; `result` returns UNKNOWN with the reason before
+  NOT_APPLICABLE and PASS; a sentence in the comment, a line in the plan; the install is `wingbox[all]`.
+  Tests REQ-ACTION-086..089 (`tests/test_skipped_language.py`).
+- #9: `Tree` and `relation` (pure, `wingbox_facts`), `tree_state` and `commit_hashes` (git, `wingbox_pr`):
+  the commit of the working folder, its relation to the head named, the files that differ from it (asked
+  before the first build; `.wingbox/`, the output folder of the GitLab wrapper, ignored files and untracked
+  files that are not source do not count). The hashes come from `git cat-file blob <commit>:<path>`; the
+  working-directory mode keeps the digests of the files on disk. Tests REQ-ACTION-090..094
+  (`tests/test_checked_commit.py`).
+- #10: `wingbox_tests.py` (new, pure): `parse_junit`, `belongs`, `evidence`. `wingbox_pr.read_test_results`
+  and `with_test_results` read the files of `WINGBOX_TEST_RESULTS` (from `WINGBOX_TEST_RESULTS_ROOT`, else
+  the repository). `wingbox_report`: `test_evidence`, `evidence_counts`, `tests_status`, `outputs` (the
+  outputs both entry scripts write). Inputs `test-results`, `require-tests`; outputs `tests-passed`,
+  `tests-failed`, `tests-without-record`. Tests REQ-ACTION-095..101 (`tests/test_test_evidence.py`).
+- #11: `wingbox_evidence.py` (new, pure): `build_evidence`, `tests_summary`, `Run`;
+  `schema/wingbox-evidence-1.schema.json`; `wingbox_pr.write_evidence`, `github_run`,
+  `wingbox_gitlab.gitlab_run`; output `evidence`; `examples/evidence-handover.yml`. Tests
+  REQ-ACTION-102..106 (`tests/test_evidence_record.py`): the record meets the schema (checked by a small
+  validator of the part of JSON Schema the file uses), and the hand-over command of the example runs
+  against a local stand-in server.
+
+Expectations of existing tests that changed with the behaviour
+
+- REQ-ACTION-067: the templates install `"wingbox[all]==$WINGBOX_VERSION"`.
+- REQ-ACTION-069: the stand-in for a failing build reads the command after `-P -m wingbox`.
+- REQ-ACTION-023: the plan's `changed-file` line names the commit and the head line ends with
+  `:checked <head> :tree head`.
+- REQ-ACTION-058: `run-test` lines end with `:evidence none`.
+
+Why
+
+- A review of 1.3.0 with Wingbox 0.12: the check could run a module of the checked repository; an
+  incomplete analysis of a mixed-language repository could pass in strict mode; the file hashes were not
+  tied to the commit named; a recommendation to run tests is not evidence that they ran; no public,
+  tested path from the check to a system that keeps evidence.
+
+Not done
+
+- No adapter for a particular compliance product: the record and the hand-over example are neutral.
+
 ## 2026-11-18: the check of a working directory
 
 What changed

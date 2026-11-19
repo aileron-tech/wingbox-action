@@ -13,6 +13,49 @@
   --base REF [--head REF] [--out DIR]`. With `--base` and no head the change is
   the base against the files on disk, uncommitted and untracked ones included;
   nothing is committed.
+- The report names the commit whose files were checked, and its file hashes
+  are of that commit. The plan's head line gains `:checked <commit> :tree
+  head|merge|other`, each `changed-file` line names the commit its SHA-256 is
+  of (the digest of `git show <commit>:<path>`), and the comment says when the
+  pull request was checked as merged into the base. A checkout that is neither
+  the head nor its merge, or that holds a changed tracked file or an untracked
+  source file, makes the result `UNKNOWN`
+  ([#9](https://github.com/aileron-tech/wingbox-action/issues/9)).
+- Evidence that the tests ran: the input `test-results` takes the JUnit XML
+  reports the job's test step wrote. Each test that uses what changed then
+  carries what the reports hold about it (`:evidence passed`, `failed`,
+  `skipped`, `no-record`; `none` without the input), each report file is named
+  with its SHA-256, the comment counts them, and the outputs `tests-passed`,
+  `tests-failed` and `tests-without-record` hold the numbers. `require-tests:
+  true` fails the job unless every such test has a passed record. The check
+  still runs no test itself
+  ([#10](https://github.com/aileron-tech/wingbox-action/issues/10)).
+- An evidence record of each run: `wingbox-evidence.json` (output `evidence`,
+  in GitLab in `wingbox-out/`), with the run, the commits, the result and its
+  reasons, the changed files and their SHA-256, the tests to run and their
+  evidence, and the SHA-256 of the report and the plan. Its shape is
+  `schema/wingbox-evidence-1.schema.json`. `examples/evidence-handover.yml`
+  hands it to another system from a job that never checks out the code
+  ([#11](https://github.com/aileron-tech/wingbox-action/issues/11)).
+- The action installs Wingbox with the parser of every language
+  (`wingbox[all]`).
+
+### Fixes
+
+- A folder of the checked repository named `wingbox/` or `pip/` was run in
+  place of the installed module: the check started Python as `python -m ...`
+  inside the checkout, and Python puts the starting folder first on its module
+  search path. Every Python the check starts now gets `-P`: the Wingbox
+  commands, the install step, both GitLab templates. The check reads the
+  repository and never runs it
+  ([#7](https://github.com/aileron-tech/wingbox-action/issues/7)).
+- With a Wingbox release that leaves a language out because its parser is not
+  installed, the files of that language were missing from the report without a
+  word, and the result could be `PASS` or `NOT_APPLICABLE`, also with
+  `fail-on: strict`. The report now says how many files of which language were
+  not analysed, the plan holds `(skipped-language <name> :files N)`, and the
+  result is `UNKNOWN`
+  ([#8](https://github.com/aileron-tech/wingbox-action/issues/8)).
 
 ## 1.3.0 - 2026-11-18
 

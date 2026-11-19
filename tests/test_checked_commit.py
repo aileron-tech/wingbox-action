@@ -81,7 +81,7 @@ class GitTest(unittest.TestCase):
         self.head = make_fixture.commit(self.repo, make_fixture.HEAD, "head")
 
     def test_the_working_folder_is_compared_with_the_head_named(self) -> None:
-        """/* REQ-ACTION-093: read from git: a checkout of the head is `head` and clean; a merge of the head into a base that moved on is `merge`; another commit is `other`; a changed tracked file and an untracked file are named as differing, while `.wingbox/`, the output folder and ignored files are not */"""
+        """/* REQ-ACTION-093: read from git: a checkout of the head is `head` and clean; a merge of the head into a base that moved on is `merge`; another commit is `other`; a changed tracked file and an untracked source file are named as differing, while `.wingbox/`, the output folder, ignored files and an untracked file that is not source (a test report) are not */"""
         self.assertEqual(pr.Tree(self.head, "head"), pr.tree_state(str(self.repo), self.head, ()))
         git(self.repo, "checkout", "-q", "main")
         moved = make_fixture.commit(self.repo, {"app/api/extra.py": "X = 1\n"}, "base moves on")
@@ -91,6 +91,7 @@ class GitTest(unittest.TestCase):
         self.assertEqual(pr.Tree(merge, "merge"), pr.tree_state(str(self.repo), self.head, ()))
         (self.repo / "app" / "api" / "routes.py").write_text("changed = True\n", encoding="utf-8")
         (self.repo / "generated.py").write_text("G = 1\n", encoding="utf-8")
+        (self.repo / "junit.xml").write_text("<testsuite/>\n", encoding="utf-8")
         for folder in (".wingbox", "ignored", "wingbox-out"):
             (self.repo / folder).mkdir()
             (self.repo / folder / "file.txt").write_text("x\n", encoding="utf-8")

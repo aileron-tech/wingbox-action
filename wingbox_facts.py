@@ -13,6 +13,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
+from wingbox_tests import Case, TestReport
+
 MARKER = "<!-- wingbox-pull-request-report -->"
 # The head of a check of a working directory: the files as they are on disk, not a commit.
 WORKING_TREE = "working-tree"
@@ -147,6 +149,9 @@ class Report:
     tool_errors: tuple[str, ...] = field(default=())                 # wingbox commands that ended abnormally
     hashes: tuple[tuple[str, str], ...] = field(default=())          # (changed file, SHA-256 of its content in the commit checked)
     tree: Optional[Tree] = None                                      # the files analysed; None when not looked at
+    test_cases: Optional[tuple[Case, ...]] = None                    # the cases of the test reports given; None: none was given
+    test_reports: tuple[TestReport, ...] = field(default=())         # the report files that were read
+    test_report_errors: tuple[tuple[str, str], ...] = field(default=())   # (file or pattern, why it gave no cases)
     checked_modules: Optional[int] = None                            # modules the boundary rules were checked on, when known
     skipped_languages: tuple[tuple[str, int], ...] = field(default=())   # (language, files) left out: its parser is not installed
 
