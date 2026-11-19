@@ -23,7 +23,7 @@ wingbox:
     WINGBOX_ACTION_REF: "v1"          # the tag, branch or commit of aileron-tech/wingbox-action the scripts come from
     WINGBOX_IMAGE: "python:3.12"      # the image the check runs in (Python 3.11 or newer, with git)
     WINGBOX_HOPS: "2"
-    WINGBOX_FAIL_ON: "none"           # none, violations, not-checked or strict
+    WINGBOX_FAIL_ON: "none"           # none, violations, not-checked, strict or existing
     WINGBOX_TEST_SCRIPT: ""           # the command that runs your tests on the runner and writes JUnit XML (see the README)
     WINGBOX_POLICY_CHANGE: ""         # fail or report: a change of the baseline, the rules or this pipeline file; empty: fail with strict
   script:

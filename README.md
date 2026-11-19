@@ -24,7 +24,8 @@ You get:
   use it, each with the place (`src/cli` calls it at `src/cli/mod.rs:331`). A
   changed private helper is reported through the public functions that call
   it. When what changed is not used outside the pull request (a comment, a
-  test, a private item nobody calls), the comment is one sentence.
+  test, a private item nobody calls), the comment is one sentence above its
+  verdicts.
 - **The tests to run**: the test files that use what changed, by name. And
   when a test changes together with the code it tests, the comment says so.
 - **A review plan for an agent**: the same facts as S-expression lines, in
@@ -171,7 +172,7 @@ the script. `--head REF` checks a commit instead.
   request use what it changes, and name the changed files they use. With new
   boundary findings the heading names them first. When no module outside the
   pull request uses a changed file directly and there is no new finding, the
-  comment is one sentence.
+  comment is one sentence, followed by the [verdicts](#verdicts).
 - **New boundary findings**: findings of `wingbox boundaries` on the head that
   the base does not have. Known findings (in a baseline) and type-only imports
   are not counted, unless the pull request itself adds the baseline entry or
@@ -275,6 +276,37 @@ The action sets the outputs `result`, `execution` and `reasons`:
 `fail-on: strict` fails the job on `FAIL` and on `UNKNOWN`. The result is
 about the boundary rules; the list of who uses what changed is information for
 the reviewer and never fails a job.
+
+### Verdicts
+
+The result answers one question: does this change introduce a boundary
+finding. A run answers more, and the comment, the job summary and the
+evidence record keep the answers apart, always these six in this order:
+
+| Verdict | In the record | Says |
+|---|---|---|
+| Boundaries, introduced by this change | `boundaries.introduced` | the result above (`PASS`, `FAIL`, `UNKNOWN`, `NOT_APPLICABLE`) with the number of findings and of violations |
+| Boundaries, there before this change | `boundaries.existing` | `PRESENT` with the number of violations the head holds that the base has too and the first of them; `NONE`; or `UNKNOWN` when none was found but not everything was checked |
+| Baseline | `baseline` | `ACCEPTED` with the number of breaks the baseline accepts and each entry with its owner, reason and end date; `EXPIRED` when an entry is past its end date (its break is a violation again); `NONE`; `UNKNOWN` |
+| Tests | `tests` | the test evidence in one word (`tests.evidence`), see [Evidence that the tests ran](#evidence-that-the-tests-ran) |
+| Coverage | `coverage` | complete or not, with the reasons, see [What the run covered](#what-the-run-covered) |
+| Eligible as evidence | `eligible`, `eligible-reasons` | `true` only when none of the five is failed, unknown, incomplete or expired |
+
+A record is eligible when the change introduces no violation, the head holds
+none from before, no baseline entry is past its end date, the test evidence
+is `complete` and the coverage is complete. Every other state gives a reason
+in `eligible-reasons`, for example `boundaries-existing: 1 violation(s)`,
+`baseline: 1 past the end date`, `tests: none-found` or `coverage:
+incomplete`. A violation that a baseline entry accepts within its terms does
+not count against the record; one without an entry does, old or new.
+
+`fail-on: existing` fails the job when the head holds a violation, one the
+pull request introduces or one that was there before. `fail-on: strict` keeps
+its meaning: a violation that was there before, an expired baseline entry, the
+test evidence or `eligible` does not fail it. The outputs `eligible`,
+`existing-violations`, `baseline-accepted` and `baseline-expired` (GitLab:
+`WINGBOX_ELIGIBLE`, `WINGBOX_EXISTING_VIOLATIONS`, `WINGBOX_BASELINE_ACCEPTED`,
+`WINGBOX_BASELINE_EXPIRED`) hold the same for a later step.
 
 ### A change that edits what it is checked by
 
@@ -551,7 +583,8 @@ holds source code outside the tests; a change of documents only passes.
 Each run also writes `wingbox-evidence.json` (output `evidence`; in GitLab in
 `wingbox-out/`): one JSON document for a system that keeps evidence of change
 control. It holds the repository and the run, the base, the head, the commit
-that was checked, the result with its reasons, the policy files the change
+that was checked, the result with its reasons, the verdicts kept apart
+(`boundaries.introduced`, `boundaries.existing`, `baseline`, `eligible`), the policy files the change
 edits (`policy`), what the run analysed and left out (`coverage`), the counts, the changed files
 with their SHA-256, the tests to run and the required tests with their
 evidence and every recorded case, the manifest of required tests as it was
@@ -560,6 +593,8 @@ report and of the plan written beside it. Its shape is
 [`schema/wingbox-evidence-2.schema.json`](schema/wingbox-evidence-2.schema.json)
 (`"schema": "wingbox-evidence/2"`); a record of 1.4 says `wingbox-evidence/1`
 and follows [`schema/wingbox-evidence-1.schema.json`](schema/wingbox-evidence-1.schema.json).
+Version 1 is superseded: it has one word for the result, and none of the
+verdicts, `policy` or `coverage`.
 
 A record is written also when the check did not run. When the install of
 Wingbox fails, or the check ends before it wrote its record, the last step of
@@ -628,7 +663,7 @@ same pull request always gives the same diagram.
 |---|---|---|
 | `version` | the current wingbox release | The wingbox release installed from PyPI, with the parser of every language. The names of what a dependent uses and the paths of the farther dependents need 0.10.0 or newer. |
 | `hops` | `2` | How far dependents are followed from each changed file. |
-| `fail-on` | `none` | `none`; `violations`: fail when the pull request introduces a layer, capability or pattern violation; `not-checked`: fail when a part of the repository could not be checked. |
+| `fail-on` | `none` | `none`; `violations`: fail when the pull request introduces a layer, capability or pattern violation; `not-checked`: fail when a part of the repository could not be checked; `strict`: fail on every result but `PASS` and `NOT_APPLICABLE`; `existing`: fail when the head holds a violation, old or new. See [Verdicts](#verdicts). |
 | `policy-change` | `fail` with `fail-on: strict`, else `report` | What a change of a file the check is judged by does: `fail` fails the job, `report` names it in the report. See [A change that edits what it is checked by](#a-change-that-edits-what-it-is-checked-by). |
 | `comment` | `true` | Write the report as a comment on the pull request. With `false` the report is only in the job summary. |
 | `upload-map` | `false` | Upload the interactive 3D map Wingbox builds (`.wingbox/map.html`) as the workflow artifact `wingbox-map`. |
@@ -656,6 +691,10 @@ same pull request always gives the same diagram.
 | `not-checked-parts` | Number of parts `wingbox boundaries` could not check. |
 | `policy-changed` | Number of files the check is judged by that the pull request edits. |
 | `coverage-complete` | `true` when the run left nothing out, else `false`. See [What the run covered](#what-the-run-covered). |
+| `existing-violations` | Number of violations the head holds that the base has too. |
+| `baseline-accepted` | Number of breaks the baseline of the head accepts. |
+| `baseline-expired` | Number of baseline entries past their end date. |
+| `eligible` | `true` when no verdict is failed, unknown, incomplete or expired, else `false`. See [Verdicts](#verdicts). |
 | `plan` | Path of the review plan (S-expression lines) on the runner. |
 | `evidence` | Path of the evidence record of the run (`wingbox-evidence.json`). Written also when the check did not run. |
 | `result` | `PASS`, `FAIL`, `UNKNOWN` or `NOT_APPLICABLE`: the result of the boundary check. |
@@ -714,7 +753,7 @@ Settings are variables of the job; override them after the include:
 ```yaml
 wingbox:
   variables:
-    WINGBOX_FAIL_ON: "strict"     # none (default), violations, not-checked or strict
+    WINGBOX_FAIL_ON: "strict"     # none (default), violations, not-checked, strict or existing
     WINGBOX_POLICY_CHANGE: "report"   # fail (default with strict) or report: a change of the baseline, the rules or the pipeline file
     WINGBOX_HOPS: "2"
     WINGBOX_VERSION: "0.14.0"     # the wingbox release from PyPI
@@ -837,7 +876,7 @@ fixture repository on Linux, macOS and Windows.
 `wingbox_pr.py` is the I/O (git, the wingbox commands, the GitHub API);
 `wingbox_facts.py` reads the facts Wingbox prints, `wingbox_policy.py` knows
 the files the check is judged by, `wingbox_coverage.py` accounts for what was
-analysed, `wingbox_report.py` builds the report and `wingbox_diagram.py` the
+analysed, `wingbox_verdicts.py` keeps the verdicts apart, `wingbox_report.py` builds the report and `wingbox_diagram.py` the
 diagram, all pure functions.
 
 ## License
