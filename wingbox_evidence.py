@@ -4,7 +4,7 @@ A report for people (Markdown) and a plan for a reviewing agent (S-expression li
 The record says what happened, for a system that keeps evidence of change control: the repository and the
 commits, the commit whose files were analysed, the result with its reasons, the changed files with their
 SHA-256, the tests that use what changed with what the test reports hold about them, and the SHA-256 of the
-report and the plan written beside it. Its shape is schema/wingbox-evidence-1.schema.json. Pure: the run's
+report and the plan written beside it. Its shape is schema/wingbox-evidence-2.schema.json. Pure: the run's
 own facts (time, repository, run address) are given by the caller.
 """
 from __future__ import annotations
@@ -16,7 +16,7 @@ import wingbox_tests
 from wingbox_facts import Report
 from wingbox_report import result, test_evidence, tests_to_run, untouched_count
 
-SCHEMA = "wingbox-evidence/1"
+SCHEMA = "wingbox-evidence/2"
 FILE_NAME = "wingbox-evidence.json"
 
 
@@ -33,8 +33,9 @@ class Run:
 
 
 def tests_summary(report: Report) -> str:
-    """none: no test report was given; failed: a test to run failed; incomplete: one was skipped or has no
-    record; complete: every test to run has a passed record (also when there is no test to run)."""
+    """none: no test report was given; failed: a test to run has a failed case; incomplete: one has a case
+    that was skipped or did not run, or has no record; complete: every recorded case of every test to run
+    passed (also when there is no test to run)."""
     found = test_evidence(report)
     if found is None:
         return "none"
@@ -66,7 +67,10 @@ def build_evidence(report: Report, run: Run, documents: dict[str, str]) -> dict[
         "tests": {
             "evidence": tests_summary(report),
             "to-run": [{"test": test.shown, "status": recorded[test.shown].status if test.shown in recorded else "none",
-                        "cases": recorded[test.shown].cases if test.shown in recorded else 0} for test in tests_to_run(report)],
+                        "cases": recorded[test.shown].cases if test.shown in recorded else 0,
+                        "records": [{"where": case.where, "name": case.name, "status": case.status}
+                                    for case in (recorded[test.shown].records if test.shown in recorded else ())]}
+                       for test in tests_to_run(report)],
             "reports": [{"path": read.path, "sha256": read.sha256, "cases": read.cases} for read in report.test_reports],
         },
         "documents": [{"name": name, "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest()} for name, text in sorted(documents.items())],

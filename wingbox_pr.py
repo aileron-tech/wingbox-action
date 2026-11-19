@@ -58,7 +58,7 @@ import wingbox_evidence  # noqa: E402
 import wingbox_tests  # noqa: E402
 from wingbox_facts import (  # noqa: E402,F401
     BLOCKING_HEADS, FINDING_HEADS, MARKER, WORKING_TREE, ChangedFile, ChangedItem, Dependent, Finding, Item, NotChecked, Report, Route, Site,
-    Tree, User, checked_modules, dependents, findings, folder_of, introduced, items, module_of, parse_line, parse_route, relation,
+    Tree, User, checked_modules, dependents, findings, folder_of, go_functions, introduced, items, module_of, parse_line, parse_route, relation,
     selected, untouched, use_sites, users,
 )
 from wingbox_report import (  # noqa: E402,F401
@@ -314,12 +314,25 @@ def read_test_results(folder: str, patterns: list[str]) -> tuple[Optional[tuple[
     return tuple(cases), tuple(reports), tuple(errors)
 
 
+def go_test_functions(root: str, tests: list[str], cases: list[wingbox_tests.Case]) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """(Go test to run, the functions Wingbox lists in it), for the tests a record of a Go package may belong
+    to: such a record names a package and a function, never a file, so the file is found by its functions.
+    Asked of the graph of root, one `wingbox module` each."""
+    found = []
+    for test in wingbox_tests.go_candidates(tests, cases):
+        names = go_functions(_wingbox(root, "module", module_of(test) if test.endswith(".go") else test))
+        if names is not None:
+            found.append((test, names))
+    return tuple(found)
+
+
 def with_test_results(report: Report, env: Any, root: str) -> Report:
     """The report with the test reports the job hands over: the patterns of WINGBOX_TEST_RESULTS (one per
     line), looked for under WINGBOX_TEST_RESULTS_ROOT, else under the repository."""
     patterns = [p.strip() for p in env.get("WINGBOX_TEST_RESULTS", "").splitlines() if p.strip()]
     cases, reports, errors = read_test_results(env.get("WINGBOX_TEST_RESULTS_ROOT") or root, patterns)
-    return dataclasses.replace(report, test_cases=cases, test_reports=reports, test_report_errors=errors)
+    functions = go_test_functions(root, [test.shown for test in tests_to_run(report)], list(cases)) if cases else ()
+    return dataclasses.replace(report, test_cases=cases, test_reports=reports, test_report_errors=errors, test_functions=functions)
 
 
 def copy_map(root: str, folder: str) -> str:

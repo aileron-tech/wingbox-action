@@ -53,11 +53,12 @@ class JUnitTest(unittest.TestCase):
 
 class MatchTest(unittest.TestCase):
     def test_a_test_to_run_gets_the_cases_recorded_for_its_file(self) -> None:
-        """/* REQ-ACTION-097: each test to run is matched with the recorded cases of its file: by the dotted class name of a Python test, by the file of a suite or a class name that is a path (JavaScript), by the end of a Java class name, by the Go package of a _test.go file; it is failed when one of its cases failed, passed when one passed and none failed, skipped when all were skipped, and without a record otherwise. A test named as a module (no file ending) matches the same way, and a name that only starts alike does not match */"""
+        """/* REQ-ACTION-097: each test to run is matched with the recorded cases of its file: by the dotted class name of a Python test, by the file of a suite or a class name that is a path (JavaScript), by the end of a Java class name, by the Go package of a _test.go file together with the test functions of that file; it is failed when one of its cases failed, passed when every one of them passed, skipped when all were skipped, and without a record when it has none. A test named as a module (no file ending) matches the same way, and a name that only starts alike does not match */"""
         cases = wt.parse_junit(PYTEST) + wt.parse_junit(JEST) + wt.parse_junit(JAVA) + wt.parse_junit(GO)
         found = wt.evidence(["tests/test_billing.py", "tests/test_orders", "tests/test_refunds.py", "tests/test_order.py",
                              "src/orders/orders.test.ts", "src/jobs/invoice.test", "src/test/java/com/shop/OrderTest.java",
-                             "pkg/billing/billing_test.go", "pkg/other/other_test.go"], cases)
+                             "pkg/billing/billing_test.go", "pkg/other/other_test.go"], cases,
+                            {"pkg/billing/billing_test.go": ("TestBill",), "pkg/other/other_test.go": ("TestOther",)})
         self.assertEqual([("tests/test_billing.py", wt.FAILED, 2), ("tests/test_orders", wt.PASSED, 1), ("tests/test_refunds.py", wt.SKIPPED, 1),
                           ("tests/test_order.py", wt.NO_RECORD, 0), ("src/orders/orders.test.ts", wt.PASSED, 1),
                           ("src/jobs/invoice.test", wt.FAILED, 1), ("src/test/java/com/shop/OrderTest.java", wt.PASSED, 1),

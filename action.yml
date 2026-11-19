@@ -37,10 +37,10 @@ inputs:
     description: The repository checkout.
     default: "."
   test-results:
-    description: "Glob patterns of the JUnit XML reports the test step of this job wrote, one per line (** crosses folders). The report then says for each test that uses what changed whether these reports hold a passed, failed or skipped record of it, or none. The check itself never runs a test."
+    description: "Glob patterns of the JUnit XML reports the test step of this job wrote, one per line (** crosses folders). The report then says for each test that uses what changed which cases these reports hold of it and how each ended. The check itself never runs a test."
     default: ""
   require-tests:
-    description: Fail the job when a test that uses what changed has no passing record in the test results. It does not change the result of the boundary check.
+    description: Fail the job unless every test that uses what changed is passed in the test results (every case recorded for it passed). It does not change the result of the boundary check.
     default: "false"
   github-token:
     description: Token for the comment (needs pull-requests write).
@@ -66,7 +66,7 @@ outputs:
     description: Path of the review plan (S-expression lines) for a reviewing agent.
     value: ${{ steps.check.outputs.plan }}
   evidence:
-    description: Path of the evidence record of the run (wingbox-evidence.json, shape in schema/wingbox-evidence-1.schema.json).
+    description: Path of the evidence record of the run (wingbox-evidence.json, shape in schema/wingbox-evidence-2.schema.json).
     value: ${{ steps.check.outputs.evidence }}
   result:
     description: "Result of the boundary check: PASS, FAIL, UNKNOWN or NOT_APPLICABLE. A part that was not checked or a tool error is UNKNOWN, never PASS."
@@ -81,13 +81,13 @@ outputs:
     description: Number of tests that use what the pull request changes.
     value: ${{ steps.check.outputs.tests-to-run }}
   tests-passed:
-    description: Number of those tests with a passed record in the test results; empty without test results.
+    description: Number of those tests whose every recorded case passed in the test results; empty without test results.
     value: ${{ steps.check.outputs.tests-passed }}
   tests-failed:
-    description: Number of those tests with a failed record in the test results; empty without test results.
+    description: Number of those tests with a failed case in the test results; empty without test results.
     value: ${{ steps.check.outputs.tests-failed }}
   tests-without-record:
-    description: Number of those tests that were skipped or are not in the test results; empty without test results.
+    description: Number of those tests that were skipped, in whole or in part, or are not in the test results; empty without test results.
     value: ${{ steps.check.outputs.tests-without-record }}
 
 runs:

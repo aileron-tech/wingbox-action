@@ -1,5 +1,46 @@
 # Log
 
+## 2026-11-19: test evidence per test case (issue #15)
+
+What changed
+
+- `wingbox_tests.py`: `Case` keeps the name of the case; `Evidence` keeps every case of a test to run as
+  `CaseResult(where, name, status)`; `_status` gives a test `passed` only when every recorded case passed,
+  and the new `partial` when a case passed and another was skipped or has no record. `belongs` no longer
+  gives a Go package record to every `_test.go` file of the folder: `in_go_file` matches it by the test
+  function of the case (the name before the first `/`) against the functions of the file, and `evidence`
+  adds a `Test...` function of the file that no report names as a case `no-record` (`TestMain`,
+  benchmarks and helpers are not expected). `go_candidates` names the tests to ask about.
+- `wingbox_facts.py`: `go_functions` reads the `fn` lines of `wingbox module <id>` of a Go module;
+  `Report.test_functions`. `wingbox_pr.go_test_functions` asks Wingbox (one `wingbox module` for each Go
+  test to run whose folder a report names as a package); `with_test_results` stores the answer.
+- `wingbox_report.py`: `test_evidence` hands the functions over; `run-test` lines count the cases by
+  status when they differ; a `test-case` line for every case, after the `run-test` lines; the comment
+  counts `partial` apart ("1 with a case skipped or not run (`x`: 1 of 2 cases passed)").
+- `wingbox_evidence.py`: `SCHEMA = "wingbox-evidence/2"`; each test to run carries `records`.
+  `schema/wingbox-evidence-2.schema.json` (new); the file of version 1 stays for records of 1.4.
+- Tests REQ-ACTION-108..116 (`tests/test_test_cases.py`), the last one with a real Wingbox on a Go
+  repository.
+
+Expectations of existing tests that changed with the behaviour
+
+- REQ-ACTION-097: the Go test file is matched with its functions given (`TestBill`); without them a
+  package record no longer counts for it.
+- REQ-ACTION-102: the record says `wingbox-evidence/2`, is checked against the schema of version 2, and
+  each test to run has `records`.
+
+Why
+
+- Issue #15: a file with one passed and one skipped case read `passed`, and one Go test function that ran
+  marked every test file of its package `passed`.
+
+Not done
+
+- Outside Go the check does not know which cases a test file should have: a case that is in no report is
+  not seen (the manifest of required tests of issue #16 names them).
+- A Go test file in the root folder of the repository gets no package record (the package path names no
+  folder to match).
+
 ## 2026-11-19: the end-to-end tests run in CI
 
 What changed

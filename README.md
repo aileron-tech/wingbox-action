@@ -229,6 +229,7 @@ lines in the order to check:
 (changed-item "src/billing/invoice.py" total :kind fn :line 12 :how changed)
 (look "src/api/orders.py" 40 :module src/api/orders :why call :item total :places 2)
 (run-test "tests/test_invoice.py" :uses total :evidence passed :cases 4)
+(test-case "tests/test_invoice.py" "tests.test_invoice" "test_total" :status passed)
 (test-report "test-results/junit.xml" :sha256 <digest> :cases 212)
 (test-changed "tests/test_invoice.py" :tests "src/billing/invoice.py")
 (not-checked "." :reason no-layer-style)
@@ -237,7 +238,8 @@ lines in the order to check:
 
 `look` is a place outside the pull request that uses a changed item: open it.
 `look-module` is a module that uses a file whose other code changed.
-`run-test` is a test that uses what changed. `changed-item ... :how calls
+`run-test` is a test that uses what changed, and `test-case` a case the test
+reports hold of it. `changed-item ... :how calls
 :via (a b)` means the item calls `a`, which calls `b`, which changed.
 `changed-file` gives the SHA-256 of the file in the commit that was checked,
 what `git show <commit>:<path> | sha256sum` prints, so a reader can check that
@@ -306,16 +308,34 @@ hand these over:
 ```
 
 Each `run-test` line of the plan then says what the reports hold about that
-test, `:evidence passed`, `failed`, `skipped` or `no-record`, with the number
-of recorded cases, and each report file is named with its SHA-256
-(`test-report`). The comment counts them: "Tests that use what changed (5): 4
-passed, 1 without a record in the test report". Without `test-results` every
-line says `:evidence none`. A test is matched with the cases of its file: by
-the file a report names, by the dotted class name of a Python test, by the
-end of a Java or C# class name, by the package of a Go test file. A report
-that declares a document type, or is not a JUnit report, is refused and named.
-`require-tests` is separate from `fail-on`: it does not change the result of
-the boundary check.
+test, with the number of recorded cases:
+
+| evidence | the cases recorded for the test |
+|---|---|
+| `passed` | every one passed |
+| `failed` | one failed |
+| `partial` | one passed, and another was skipped or did not run; the line counts them (`:passed 3 :skipped 1`) |
+| `skipped` | none passed |
+| `no-record` | the reports hold none |
+
+Every case is a `test-case` line: the test, where the report puts the case
+(its class name, else its file, else its suite), its name and its status.
+Each report file is named with its SHA-256 (`test-report`). The comment counts
+the tests: "Tests that use what changed (5): 3 passed, 1 with a case skipped
+or not run (`tests/test_auth.py`: 1 of 2 cases passed), 1 without a record in
+the test report". Only `passed` counts as passed, in the comment, in the
+outputs and for `require-tests`. Without `test-results` every line says
+`:evidence none`.
+
+A test is matched with the cases of its file: by the file a report names, by
+the dotted class name of a Python test, by the end of a Java or C# class
+name. A Go report names a package and a test function, never a file, so the
+action asks Wingbox for the functions of each Go test file: a record goes to
+the file that holds its function (a subtest `TestX/name` goes with `TestX`),
+and a `Test...` function of the file that no report names is a case
+`no-record`. A report that declares a document type, or is not a JUnit
+report, is refused and named. `require-tests` is separate from `fail-on`: it
+does not change the result of the boundary check.
 
 ### The evidence record
 
@@ -323,9 +343,12 @@ Each run also writes `wingbox-evidence.json` (output `evidence`; in GitLab in
 `wingbox-out/`): one JSON document for a system that keeps evidence of change
 control. It holds the repository and the run, the base, the head, the commit
 that was checked, the result with its reasons, the counts, the changed files
-with their SHA-256, the tests to run with their evidence and the test reports,
-and the SHA-256 of the report and of the plan written beside it. Its shape is
-[`schema/wingbox-evidence-1.schema.json`](schema/wingbox-evidence-1.schema.json).
+with their SHA-256, the tests to run with their evidence and every recorded
+case, the test reports, and the SHA-256 of the report and of the plan written
+beside it. Its shape is
+[`schema/wingbox-evidence-2.schema.json`](schema/wingbox-evidence-2.schema.json)
+(`"schema": "wingbox-evidence/2"`); a record of 1.4 says `wingbox-evidence/1`
+and follows [`schema/wingbox-evidence-1.schema.json`](schema/wingbox-evidence-1.schema.json).
 
 [`examples/evidence-handover.yml`](examples/evidence-handover.yml) is a
 workflow in two jobs: the check, which reads the pull request and holds no
@@ -364,7 +387,7 @@ same pull request always gives the same diagram.
 | `head` | the head of the pull request | Head commit. |
 | `working-directory` | `.` | The checkout of the repository. |
 | `test-results` | none | Glob patterns of the JUnit XML reports the test step of the job wrote, one per line (`**` crosses folders). See [Evidence that the tests ran](#evidence-that-the-tests-ran). |
-| `require-tests` | `false` | Fail the job when a test that uses what changed has no passed record in `test-results`. |
+| `require-tests` | `false` | Fail the job unless every test that uses what changed is `passed` in `test-results`: every case recorded for it passed. |
 | `github-token` | `github.token` | Token for the comment. |
 
 ## Outputs
@@ -382,9 +405,9 @@ same pull request always gives the same diagram.
 | `execution` | `ok`, or `error` when a wingbox command ended abnormally. |
 | `reasons` | The reasons of the result, separated by semicolons; empty for `PASS`. |
 | `tests-to-run` | Number of tests that use what the pull request changes. |
-| `tests-passed` | Number of those tests with a passed record in `test-results`; empty without test results. |
-| `tests-failed` | Number of those tests with a failed record; empty without test results. |
-| `tests-without-record` | Number of those tests that were skipped or are not in the test results; empty without test results. |
+| `tests-passed` | Number of those tests whose every recorded case passed in `test-results`; empty without test results. |
+| `tests-failed` | Number of those tests with a failed case; empty without test results. |
+| `tests-without-record` | Number of those tests that were skipped, in whole or in part, or are not in the test results; empty without test results. |
 
 ## GitLab CI
 
@@ -504,6 +527,10 @@ then writes no comment, warns, and keeps the report in the job summary.
   usages`: exact where Wingbox records positions, by file elsewhere. At most
   60 items are asked about in one pull request; beyond that the files are
   taken as a whole.
+- Test evidence is what the reports hold. Outside Go the check does not know
+  which cases a test file has, so a case that is in no report is not seen. A
+  Go test file in the root folder of the repository gets no package record:
+  its package path names no folder.
 - The diagram is capped at 40 boxes and 60 arrows, as described above; the
   list in the comment names at most ten direct dependents and the job summary
   lists them all.

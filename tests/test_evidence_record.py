@@ -21,7 +21,7 @@ import wingbox_tests as wt  # noqa: E402
 from test_test_evidence import with_tests  # noqa: E402
 from test_wingbox_pr import report  # noqa: E402
 
-SCHEMA = json.loads((ROOT / "schema" / "wingbox-evidence-1.schema.json").read_text(encoding="utf-8"))
+SCHEMA = json.loads((ROOT / "schema" / "wingbox-evidence-2.schema.json").read_text(encoding="utf-8"))
 RUN = we.Run("github", "owner/repo", "12", "7", "https://github.com/owner/repo/actions/runs/7", "v1", "2026-01-02T03:04:05Z")
 TYPES = {"object": dict, "array": list, "string": str, "integer": int}
 
@@ -51,21 +51,22 @@ def problems(value: object, schema: dict, where: str = "$") -> list[str]:
 
 class RecordTest(unittest.TestCase):
     def test_the_record_says_what_was_checked_and_what_was_found(self) -> None:
-        """/* REQ-ACTION-102: the evidence record names its schema, the run, the base, the head, the commit checked and how it relates to the head, the result with its reasons, the counts, each changed file with its SHA-256, each test to run with its evidence, each test report and each document written beside it with its SHA-256; it meets schema/wingbox-evidence-1.schema.json, with and without test results, a tree or findings */"""
+        """/* REQ-ACTION-102: the evidence record names its schema, the run, the base, the head, the commit checked and how it relates to the head, the result with its reasons, the counts, each changed file with its SHA-256, each test to run with its evidence and its recorded cases, each test report and each document written beside it with its SHA-256; it meets schema/wingbox-evidence-2.schema.json, with and without test results, a tree or findings */"""
         cases = tuple(wt.parse_junit(b'<testsuite name="tests/order.test.ts"><testcase classname="x" name="a"/></testsuite>'))
         full = with_tests(tree=pr.Tree("c" * 40, "merge"), hashes=(("src/models/order.ts", "f" * 64),), test_cases=cases,
                           test_reports=(wt.TestReport("junit.xml", "e" * 64, 1),))
         record = we.build_evidence(full, RUN, {"wingbox-report.md": "report\n", "wingbox-plan.sexp": "plan\n"})
         self.assertEqual([], problems(record, SCHEMA))
-        self.assertEqual("wingbox-evidence/1", record["schema"])
+        self.assertEqual("wingbox-evidence/2", record["schema"])
         self.assertEqual({"base": "a" * 40, "head": "b" * 40, "checked": "c" * 40, "tree": "merge", "differs": []}, record["subject"])
         self.assertEqual({"provider": "github", "repository": "owner/repo", "change": "12", "id": "7",
                           "url": "https://github.com/owner/repo/actions/runs/7"}, record["run"])
         self.assertEqual("FAIL", record["result"]["boundaries"])
         self.assertEqual([{"path": "src/models/order.ts", "sha256": "f" * 64}], record["files"])
         self.assertEqual("incomplete", record["tests"]["evidence"])
-        self.assertEqual([{"test": "tests/invoice.test", "status": "no-record", "cases": 0},
-                          {"test": "tests/order.test", "status": "passed", "cases": 1}], record["tests"]["to-run"])
+        self.assertEqual([{"test": "tests/invoice.test", "status": "no-record", "cases": 0, "records": []},
+                          {"test": "tests/order.test", "status": "passed", "cases": 1, "records": [{"where": "x", "name": "a", "status": "passed"}]}],
+                         record["tests"]["to-run"])
         self.assertEqual(["wingbox-plan.sexp", "wingbox-report.md"], [document["name"] for document in record["documents"]])
         plain = we.build_evidence(report(), dataclass_replace(RUN, provider="local"), {})
         self.assertEqual([], problems(plain, SCHEMA))

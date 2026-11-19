@@ -341,12 +341,13 @@ def test_evidence(report: Report) -> Optional[tuple[wingbox_tests.Evidence, ...]
     """What the test reports given to the check hold about each test to run; None when none was given."""
     if report.test_cases is None:
         return None
-    return wingbox_tests.evidence([test.shown for test in tests_to_run(report)], list(report.test_cases))
+    return wingbox_tests.evidence([test.shown for test in tests_to_run(report)], list(report.test_cases), dict(report.test_functions))
 
 
 def evidence_counts(report: Report) -> tuple[str, str, str]:
-    """(tests to run with a passed record, with a failed one, without a passing record: skipped or no record),
-    as the text of the outputs; three empty texts when no test report was given."""
+    """(tests to run whose every recorded case passed, with a failed case, without a passing record: skipped
+    in whole or in part, or no record), as the text of the outputs; three empty texts when no test report was
+    given."""
     found = test_evidence(report)
     if found is None:
         return "", "", ""
@@ -357,7 +358,7 @@ def evidence_counts(report: Report) -> tuple[str, str, str]:
 
 def tests_status(report: Report, require: bool) -> int:
     """1 when a passing record is required for every test to run and one has none (no test report was given,
-    or the test failed, was skipped or is not in the reports); else 0."""
+    or the test failed, was skipped in whole or in part, or is not in the reports); else 0."""
     if not require or not tests_to_run(report):
         return 0
     found = test_evidence(report)
@@ -383,13 +384,22 @@ def _evidence_words(recorded: tuple[wingbox_tests.Evidence, ...], full: bool) ->
         shown = names if full else names[:TESTS_LIMIT]
         return ", ".join(_code(name) for name in shown) + (f" and {len(names) - len(shown)} more" if len(names) > len(shown) else "")
 
+    def in_part(names: list[str]) -> str:
+        """The tests with their cases counted: a passed case there does not make the test passed."""
+        cases = {item.test: item.records for item in recorded}
+        shown = names if full else names[:TESTS_LIMIT]
+        return (", ".join(f"{_code(name)}: {sum(1 for case in cases[name] if case.status == wingbox_tests.PASSED)} of {len(cases[name])} cases passed"
+                          for name in shown) + (f" and {len(names) - len(shown)} more" if len(names) > len(shown) else ""))
+
     said = []
-    passed, failed, skipped, none = (named(status) for status in (wingbox_tests.PASSED, wingbox_tests.FAILED, wingbox_tests.SKIPPED,
-                                                                  wingbox_tests.NO_RECORD))
+    passed, failed, partial, skipped, none = (named(status) for status in (wingbox_tests.PASSED, wingbox_tests.FAILED, wingbox_tests.PARTIAL,
+                                                                           wingbox_tests.SKIPPED, wingbox_tests.NO_RECORD))
     if passed:
         said.append(f"{len(passed)} passed")
     if failed:
         said.append(f"{len(failed)} FAILED ({listed(failed)})")
+    if partial:
+        said.append(f"{len(partial)} with a case skipped or not run ({in_part(partial)})")
     if skipped:
         said.append(f"{len(skipped)} skipped ({listed(skipped)})")
     if none:
@@ -438,7 +448,8 @@ def build_plan(report: Report) -> str:
     findings, then for each changed item the places outside the pull request that use it (file, line, how),
     the files whose other code changed with the modules that use them, the tests to run, the tests changed
     with their code, the parts not checked and the content hash of each changed file. For a reviewing agent:
-    every `look` line is a place to open, every `run-test` line a test to run."""
+    every `look` line is a place to open, every `run-test` line a test to run, every `test-case` line a case
+    the test reports hold of such a test (or a test function of it that they do not hold)."""
     outcome, execution, reasons = result(report)
     lines = [f"(review-plan :schema {PLAN_SCHEMA} :result {outcome} :execution {execution} :base {report.base} :head {report.head} "
              f":wingbox {_q(report.version)} :hops {report.hops}{_tree_keys(report.tree)})"]
@@ -461,8 +472,10 @@ def build_plan(report: Report) -> str:
     recorded = {item.test: item for item in test_evidence(report) or ()}
     for test in tests_to_run(report):
         known = recorded.get(test.shown)
-        proof = "none" if report.test_cases is None or known is None else f"{known.status} :cases {known.cases}"
+        proof = "none" if report.test_cases is None or known is None else f"{known.status} :cases {known.cases}{_case_counts(known)}"
         lines.append(f"(run-test {_q(test.shown)} :uses {_atom(test.uses) if test.by_item else _q(test.uses)} :evidence {proof})")
+    lines += [f"(test-case {_q(test.shown)} {_q(case.where)} {_q(case.name)} :status {case.status})"
+              for test in tests_to_run(report) if test.shown in recorded for case in recorded[test.shown].records]
     lines += [f"(test-report {_q(read.path)} :sha256 {read.sha256} :cases {read.cases})" for read in report.test_reports]
     lines += [f"(test-report-error {_q(path)} :reason {_q(reason)})" for path, reason in report.test_report_errors]
     lines += [f"(test-changed {_q(test)} :tests {_q(source)})" for test, source in report.tests_changed]
@@ -477,6 +490,12 @@ def build_plan(report: Report) -> str:
         if len(report.tree.differs) > DIFFERS_LIMIT:
             lines.append(f"(tree-differs-more :hidden {len(report.tree.differs) - DIFFERS_LIMIT})")
     return "\n".join(lines)
+
+
+def _case_counts(known: wingbox_tests.Evidence) -> str:
+    """The cases of a test to run counted by status, for its `run-test` line; nothing when they all ended alike."""
+    counted = [(status, sum(1 for case in known.records if case.status == status)) for status in wingbox_tests.STATUSES]
+    return "".join(f" :{status} {number}" for status, number in counted if number) if sum(1 for _status, number in counted if number) > 1 else ""
 
 
 DIFFERS_LIMIT = 50   # differing files named in the plan; the reason of the result holds the count of them all
