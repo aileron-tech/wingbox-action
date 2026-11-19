@@ -1,5 +1,21 @@
 # Log
 
+## 2026-11-19: the end-to-end tests run in CI
+
+What changed
+
+- `.github/workflows/test.yml`: the unit job installs the default Wingbox release
+  (`scripts/bump_version.py --show`, new) before the tests, so the tests marked "wingbox is not installed"
+  run on the three systems.
+- `tests/test_action.py` REQ-ACTION-021: the output folder holds `wingbox-evidence.json` too (the
+  expectation was of 1.3.0; the behaviour is the one released in 1.4.0).
+- `tests/test_test_evidence.py` REQ-ACTION-107: the whole script with test reports of the job, on a real
+  repository: evidence passed, then no-record with `require-tests` failing the job.
+
+Why
+
+- A local run with a real Wingbox after the 1.4.0 release found the stale expectation; CI had not run it.
+
 ## 2026-11-19: the check on this repository's own pull requests
 
 What changed

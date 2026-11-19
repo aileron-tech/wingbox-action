@@ -1,5 +1,9 @@
 """Evidence that the tests to run did run: JUnit reports matched with the tests the check names."""
 import hashlib
+import importlib.util
+import json
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -9,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 
+import make_fixture  # noqa: E402
 import wingbox_pr as pr  # noqa: E402
 import wingbox_tests as wt  # noqa: E402
 from test_wingbox_pr import IMPACT, report  # noqa: E402,F401
@@ -137,6 +142,56 @@ class FilesTest(unittest.TestCase):
         shell = (ROOT / "gitlab" / "wingbox-shell.gitlab-ci.yml").read_text(encoding="utf-8")
         for name in ("--env WINGBOX_TEST_RESULTS ", "--env WINGBOX_REQUIRE_TESTS", "--env WINGBOX_TEST_RESULTS_ROOT=/repo"):
             self.assertIn(name, shell)
+
+
+TESTED = {"tests/__init__.py": "", "tests/test_billing.py": "from app.services.billing import bill\n\n\ndef test_bill():\n    assert bill(None) is None\n"}
+JUNIT = '<testsuites><testsuite name="pytest"><testcase classname="{name}" name="test_bill"/></testsuite></testsuites>'
+
+
+@unittest.skipUnless(importlib.util.find_spec("wingbox"), "wingbox is not installed in this Python")
+class EndToEndTest(unittest.TestCase):
+    def run_check(self, repo: Path, out: Path, base: str, head: str, require: str) -> subprocess.CompletedProcess:
+        env = {key: value for key, value in os.environ.items() if not key.startswith(("GITHUB_", "WINGBOX_", "CI_")) or key == "WINGBOX_JOBS"}
+        env.update(WINGBOX_VERSION="test", WINGBOX_TEST_RESULTS="test-results/*.xml", WINGBOX_REQUIRE_TESTS=require,
+                   GITHUB_OUTPUT=str(out / "output.txt"))
+        return subprocess.run([sys.executable, str(ROOT / "wingbox_pr.py"), "--root", str(repo), "--base", base, "--head", head, "--out", str(out)],
+                              cwd=out, env=env, capture_output=True, text=True)
+
+    def test_the_whole_script_takes_the_test_reports_of_the_job(self) -> None:
+        """/* REQ-ACTION-107: run as a job would run it, on a repository whose test file uses the changed function and whose test step left a JUnit report in the checkout (an untracked file that is not source, so the checkout still counts as its commit): the plan says `:evidence passed`, the outputs count one passed test, the evidence record says `complete` and names the report with its SHA-256, and `require-tests` lets the job pass; with a report that holds no case of that test the same run says `no-record`, `incomplete`, and `require-tests` fails the job while the result of the boundary check is the same */"""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, out = Path(tmp) / "repo", Path(tmp) / "out"
+            repo.mkdir()
+            out.mkdir()
+            subprocess.run(["git", "init", "-q", str(repo)], check=True)
+            base = make_fixture.commit(repo, {**make_fixture.BASE, **TESTED}, "base")
+            head = make_fixture.commit(repo, make_fixture.HEAD, "head")
+            (repo / "test-results").mkdir()
+            report_file = repo / "test-results" / "junit.xml"
+            report_file.write_text(JUNIT.format(name="tests.test_billing"), encoding="utf-8")
+            done = self.run_check(repo, out, base, head, "true")
+            self.assertEqual(0, done.returncode, done.stdout + done.stderr)
+            plan = (out / "wingbox-plan.sexp").read_text(encoding="utf-8")
+            self.assertIn(":tree head)", plan.splitlines()[0])
+            self.assertRegex(plan, r'\(run-test "tests/test_billing(\.py)?" :uses \S+ :evidence passed :cases 1\)')
+            self.assertIn(f'(test-report "test-results/junit.xml" :sha256 {hashlib.sha256(report_file.read_bytes()).hexdigest()} :cases 1)', plan)
+            outputs = dict(line.split("=", 1) for line in (out / "output.txt").read_text(encoding="utf-8").splitlines() if "=" in line)
+            self.assertEqual(("1", "1", "0", "0"), (outputs["tests-to-run"], outputs["tests-passed"], outputs["tests-failed"], outputs["tests-without-record"]))
+            record = json.loads((out / "wingbox-evidence.json").read_text(encoding="utf-8"))
+            self.assertEqual(("complete", "head", head), (record["tests"]["evidence"], record["subject"]["tree"], record["subject"]["checked"]))
+            self.assertNotIn("tree-differs", plan)
+            first_result = outputs["result"]
+
+            (out / "output.txt").unlink()
+            report_file.write_text(JUNIT.format(name="tests.test_other"), encoding="utf-8")
+            missing = self.run_check(repo, out, base, head, "true")
+            self.assertEqual(1, missing.returncode, missing.stdout + missing.stderr)
+            self.assertIn("require-tests: 1 test(s) that use what changed have no passing record", missing.stdout)
+            self.assertIn(":evidence no-record :cases 0)", (out / "wingbox-plan.sexp").read_text(encoding="utf-8"))
+            again = dict(line.split("=", 1) for line in (out / "output.txt").read_text(encoding="utf-8").splitlines() if "=" in line)
+            self.assertEqual((first_result, "0", "1"), (again["result"], again["tests-passed"], again["tests-without-record"]))
+            self.assertEqual("incomplete", json.loads((out / "wingbox-evidence.json").read_text(encoding="utf-8"))["tests"]["evidence"])
+            self.assertEqual(0, self.run_check(repo, out, base, head, "false").returncode)
 
 
 if __name__ == "__main__":

@@ -193,7 +193,7 @@ class FixtureTest(unittest.TestCase):
             self.assertEqual({".git", ".wingbox", "app", "docs"}, {p.name for p in repo.iterdir()})
 
     def test_without_the_input_no_map_leaves_the_checkout(self) -> None:
-        """/* REQ-ACTION-021: without `upload-map` the script copies no map, gives an empty `map` output and the report does not mention one. */"""
+        """/* REQ-ACTION-021: without `upload-map` the script copies no map, gives an empty `map` output and the report does not mention one; the runner's temporary folder holds the outputs file, the report, the plan and the evidence record, nothing else. */"""
         with tempfile.TemporaryDirectory() as tmp:
             repo, temp = Path(tmp) / "repo", Path(tmp) / "runner"
             temp.mkdir()
@@ -206,7 +206,7 @@ class FixtureTest(unittest.TestCase):
             done = subprocess.run([sys.executable, str(ROOT / "wingbox_pr.py")], cwd=repo, env=env, capture_output=True, text=True)
             self.assertEqual(0, done.returncode, done.stdout + done.stderr)
             self.assertRegex((temp / "output.txt").read_text(encoding="utf-8"), re.compile(r"^map=$", re.M))
-            self.assertEqual(["output.txt", "wingbox-plan.sexp", "wingbox-report.md"], sorted(p.name for p in temp.iterdir()))
+            self.assertEqual(["output.txt", "wingbox-evidence.json", "wingbox-plan.sexp", "wingbox-report.md"], sorted(p.name for p in temp.iterdir()))
             self.assertNotIn("Interactive map", done.stdout)
 
 

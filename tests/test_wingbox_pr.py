@@ -188,7 +188,7 @@ class MetadataTest(unittest.TestCase):
         self.assertIn(f"wingbox {default} from PyPI", (ROOT / "README.md").read_text(encoding="utf-8"))
 
     def test_the_bump_script_rewrites_the_default_release(self) -> None:
-        """/* REQ-ACTION-008: scripts/bump_version.py sets the default of the version input in action.yml and the release named in README.md, and refuses an action.yml without that default. */"""
+        """/* REQ-ACTION-008: scripts/bump_version.py sets the default of the version input in action.yml and the release named in README.md, and refuses an action.yml without that default; `--show` prints the current default, and the unit job of the test workflow installs that release so the end-to-end tests run there. */"""
         _bump = importlib.util.spec_from_file_location("bump_version", ROOT / "scripts" / "bump_version.py")
         bump = importlib.util.module_from_spec(_bump)
         _bump.loader.exec_module(bump)
@@ -199,6 +199,10 @@ class MetadataTest(unittest.TestCase):
         self.assertIn("wingbox 9.8.7 from PyPI", new_readme)
         with self.assertRaises(ValueError):
             bump.with_version("name: x\n", readme, "9.8.7")
+        self.assertEqual("9.8.7", bump.current(new_action))
+        self.assertRegex(bump.current(action), r"^\d+\.\d+\.\d+$")
+        workflow = (ROOT / ".github" / "workflows" / "test.yml").read_text(encoding="utf-8")
+        self.assertIn('"wingbox[all]==$(python -P scripts/bump_version.py --show)"', workflow)
 
     def test_no_local_path_or_private_name_in_the_repository(self) -> None:
         """/* REQ-ACTION-009: the repository holds English text only, no local path of a machine and no non-ASCII character in its text files. */"""

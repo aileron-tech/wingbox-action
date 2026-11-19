@@ -26,7 +26,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: python -m unittest discover -s tests
+      # The end-to-end tests run the scripts with a real Wingbox; without it they are skipped.
+      - name: Install the default wingbox release
+        shell: bash
+        run: python -P -m pip install --disable-pip-version-check --quiet "wingbox[all]==$(python -P scripts/bump_version.py --show)"
+      - run: python -P -m unittest discover -s tests
+        env:
+          WINGBOX_JOBS: "1"
   fixture:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
