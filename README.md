@@ -1076,6 +1076,12 @@ The input `controls` (in GitLab `WINGBOX_CONTROLS`) names another path than `.wi
 Sixteen worked examples on a small invented repository, each with what a reviewer can and cannot
 conclude, are in [`docs/controls/examples.md`](docs/controls/examples.md).
 
+Which controls can the records support? [`docs/controls/matrix.md`](docs/controls/matrix.md) answers row by row
+for ISO/IEC 27001:2022, ISO/IEC 42001:2023 and the criteria of a SOC 2 examination: the evidence a run gives,
+what a reviewer still needs from elsewhere, and what code evidence does not show. The same rows are in
+[`docs/controls/matrix.controls.yaml`](docs/controls/matrix.controls.yaml) as a reference mapping of drafts, to
+copy a row from; it supports no claim by itself.
+
 ## Inputs
 
 | Input | Default | Meaning |

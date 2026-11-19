@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Changes
+
+- A control matrix, [`docs/controls/matrix.md`](docs/controls/matrix.md): for ISO/IEC 27001:2022,
+  ISO/IEC 42001:2023 and the criteria of a SOC 2 examination, the rows where the records of this
+  check can support a part of a control. Each row says why the control concerns a software team, the
+  fields of the record, the package, the ledger or the period report that a run gives, what a
+  reviewer still needs from elsewhere, and what code evidence does not show; each regime opens with
+  what is not promised. Identifiers and titles only, with the source each was checked against. The
+  same fourteen rows are in `docs/controls/matrix.controls.yaml` in the format of a control mapping:
+  every control there is a draft, so the file supports no claim until a team copies a row into its
+  own approved mapping.
+
 ## 1.6.0 - 2026-11-19
 
 ### Changes

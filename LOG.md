@@ -1,5 +1,44 @@
 # Log
 
+## 2026-11-19: a control matrix for three regimes (issue #26)
+
+What changed
+
+- `docs/controls/matrix.md` (new): fourteen rows, seven of ISO/IEC 27001:2022 Annex A, four of ISO/IEC 42001:2023
+  Annex A, three criteria of the 2017 Trust Services Criteria. Per row: why it concerns a software team, the
+  fields a run gives, what is still needed from elsewhere, the limit, the source and the day it was checked. Each
+  regime opens with what is not promised. The page carries `Status: DRAFT, not reviewed.` until the maintainer
+  signs the review.
+- `docs/controls/matrix.controls.yaml` (new): the same rows in the format `wingbox-controls/1`, every control a
+  draft.
+- `tests/test_matrix.py` (new): REQ-ACTION-235 (the page and the mapping hold the same rows, written out by hand
+  in the test), 236 (every row fills its columns, cites a listed source with a day, and the page has its status
+  line), 237 (no control of the reference mapping is supported, even with a record whose verdicts all hold).
+- README, section "Control mapping": a paragraph that points to both files.
+
+Why
+
+- Issue #26: teams ask which controls the records can support, and without one answer in one place the tool is
+  taken for more than it is.
+
+How the identifiers were checked
+
+- ISO/IEC 27001: against the public table of contents of ISO/IEC 27002:2022, which lists every control with its
+  number and title. ISO/IEC 42001: against two public crosswalks that agree, not against Annex A itself.
+  SOC 2: against the print of TSP Section 100 that includes the updates of March 2020 and a public crosswalk
+  headed "Inclusive of 2022 updates". What the reviewer has to confirm against a copy of each standard is
+  listed at the end of the page.
+
+Not done
+
+- The review by the maintainer, who signs the page; until then the pull request is a draft.
+- Rows worked through on a public sample repository (the issue asks for ten). The sixteen worked examples of
+  `docs/controls/examples.md` use an invented team's own controls and name no standard.
+
+Verification
+
+- `python3 -P -m unittest discover -s tests`: see the pull request.
+
 ## 2026-11-19: a control mapping and its check against a record (issue #22)
 
 What changed
