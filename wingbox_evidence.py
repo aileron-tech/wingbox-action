@@ -3,8 +3,9 @@
 A report for people (Markdown) and a plan for a reviewing agent (S-expression lines) say what to look at.
 The record says what happened, for a system that keeps evidence of change control: the repository and the
 commits, the commit whose files were analysed, the result with its reasons, the changed files with their
-SHA-256, the tests that use what changed with what the test reports hold about them, and the SHA-256 of the
-report and the plan written beside it. Its shape is schema/wingbox-evidence-2.schema.json. Pure: the run's
+SHA-256, the tests that use what changed with what the test reports hold about them, the controls of the
+team's mapping with what the record supports for each, and the SHA-256 of the report and the plan written
+beside it. Its shape is schema/wingbox-evidence-2.schema.json. Pure: the run's
 own facts (time, repository, run address) are given by the caller.
 """
 from __future__ import annotations
@@ -13,6 +14,7 @@ import hashlib
 from dataclasses import dataclass
 from typing import Optional
 
+import wingbox_controls
 import wingbox_coverage
 import wingbox_policy
 import wingbox_tests
@@ -56,7 +58,7 @@ def build_evidence(report: Report, run: Run, documents: dict[str, str]) -> dict[
     manifest = report.tests_manifest
     origin = report.test_origin or wingbox_tests.Origin()
     tree = report.tree
-    return {
+    record: dict[str, object] = {
         "schema": SCHEMA,
         "generated": run.generated,
         "tool": {"name": "wingbox-action", "ref": run.action_ref, "wingbox": report.version},
@@ -91,3 +93,6 @@ def build_evidence(report: Report, run: Run, documents: dict[str, str]) -> dict[
         },
         "documents": [{"name": name, "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest()} for name, text in sorted(documents.items())],
     }
+    # The control mapping is evaluated against the record as it is written, at the day of the record: no clock is read here.
+    record["controls"] = wingbox_controls.evaluate(report.controls_map, record, run.generated[:10])
+    return record

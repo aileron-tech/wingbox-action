@@ -13,6 +13,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
+from wingbox_controls import ControlMap
 from wingbox_tests import Case, Manifest, Origin, Required, TestReport
 
 MARKER = "<!-- wingbox-pull-request-report -->"
@@ -137,7 +138,7 @@ class Finding:
 class PolicyChange:
     """A file the check is judged by that the change edits."""
     path: str
-    kind: str     # baseline, rules, declared-rules, workflow or required-tests
+    kind: str     # baseline, rules, declared-rules, workflow, required-tests or controls
     how: str      # added, changed or removed
 
 
@@ -245,6 +246,7 @@ class Report:
     existing: tuple[Finding, ...] = field(default=())                # findings the head holds that the base has too
     accepted: tuple[Finding, ...] = field(default=())                # the breaks the head's baseline accepts, with the terms of each entry
     expired: tuple[Finding, ...] = field(default=())                 # violations whose baseline entry is past its end date
+    controls_map: Optional[ControlMap] = None                        # the control mapping; None: the repository has none
 
 
 def tree_reasons(report: Report) -> tuple[str, ...]:

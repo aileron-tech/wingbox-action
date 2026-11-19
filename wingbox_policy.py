@@ -1,7 +1,8 @@
 """The files a change is checked by, and what a change of them means for the check.
 
 The result of the check rests on files of the repository itself: the breaks a baseline accepts, the rules of
-`.wingbox/`, the rule files a project declares, the workflow that runs the check, the list of required tests.
+`.wingbox/`, the rule files a project declares, the workflow that runs the check, the list of required tests,
+the mapping from controls to evidence.
 A change that edits one of them would be judged by its own edit. This module names these files, reads a
 change of them, and says what the record holds about it; the findings themselves are judged with the files
 of the base (wingbox_facts.judged, with the build wingbox_pr makes for it). Pure functions only.
@@ -10,13 +11,15 @@ from __future__ import annotations
 
 from typing import Mapping, Optional
 
+from wingbox_controls import CONTROLS_PATH
 from wingbox_facts import Acceptance, BaselineEntry, PolicyChange, Report, parse_line
 from wingbox_tests import MANIFEST_PATH
 
 BASELINE = ".wingbox/baseline.sexp"
 DECISIONS = ".wingbox/decisions.sexp"    # a log every build adds to; a policy file only for the layers it sets
 # The policy files with a fixed place, and what each is.
-FIXED = {BASELINE: "baseline", ".wingbox/config.yaml": "rules", ".wingbox/learned.sexp": "rules", MANIFEST_PATH: "required-tests"}
+FIXED = {BASELINE: "baseline", ".wingbox/config.yaml": "rules", ".wingbox/learned.sexp": "rules", MANIFEST_PATH: "required-tests",
+         CONTROLS_PATH: "controls"}
 JUDGING = frozenset({"baseline", "rules", "declared-rules"})   # the kinds that decide what `wingbox boundaries` reports
 MODES = ("fail", "report")
 _WORKFLOW_FOLDER = ".github/workflows/"
@@ -50,16 +53,18 @@ def declared_files(graph: list[str]) -> frozenset[str]:
 def named(env: Mapping[str, str]) -> dict[str, str]:
     """The policy files the settings of the run name, each with its kind: the file of the workflow this run is
     part of, as the CI system names it (a workflow of this repository in GitHub Actions, the pipeline file in
-    GitLab CI), and the manifest of required tests when the job gives its path (WINGBOX_REQUIRED_TESTS)."""
+    GitLab CI), the manifest of required tests when the job gives its path (WINGBOX_REQUIRED_TESTS), and the
+    control mapping when the job gives its path (WINGBOX_CONTROLS)."""
     found: dict[str, str] = {}
     reference, repository = env.get("GITHUB_WORKFLOW_REF", ""), env.get("GITHUB_REPOSITORY", "")
     if reference and repository and reference.startswith(f"{repository}/"):
         found[reference[len(repository) + 1:].split("@", 1)[0]] = "workflow"
     elif env.get("CI_JOB_ID"):
         found[env.get("CI_CONFIG_PATH") or _GITLAB_FILE] = "workflow"
-    manifest = env.get("WINGBOX_REQUIRED_TESTS", "").strip().replace("\\", "/")
-    if manifest:
-        found[manifest[2:] if manifest.startswith("./") else manifest] = "required-tests"
+    for setting, kind in (("WINGBOX_REQUIRED_TESTS", "required-tests"), ("WINGBOX_CONTROLS", "controls")):
+        given = env.get(setting, "").strip().replace("\\", "/")
+        if given:
+            found[given[2:] if given.startswith("./") else given] = kind
     return found
 
 

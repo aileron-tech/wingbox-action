@@ -56,6 +56,7 @@ from typing import Any, Callable, Mapping, Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent))   # the modules next to this file, however it is loaded
 
 import wingbox_changes  # noqa: E402
+import wingbox_controls  # noqa: E402
 import wingbox_coverage  # noqa: E402
 import wingbox_evidence  # noqa: E402
 import wingbox_evidence_cli  # noqa: E402
@@ -606,6 +607,28 @@ def read_manifest(root: str, path: str, base: str) -> Optional[wingbox_tests.Man
     return wingbox_tests.Manifest(name, source, base if source == "base" else "", hashlib.sha256(data).hexdigest(), groups, errors)
 
 
+def read_controls(root: str, path: str, base: str) -> Optional[wingbox_controls.ControlMap]:
+    """The control mapping: the file at path (from the root of the repository; "" for the default place) as
+    the base commit holds it, so that a change cannot weaken the mapping it is judged by; when the base has
+    none, the file of the checkout, which then supports no claim (wingbox_controls: `mapping-not-in-base`).
+    None when the default place holds none; a path that was given and is nowhere, or that leaves the
+    repository, is an error of the mapping."""
+    given = path.strip().replace("\\", "/")
+    name = given or wingbox_controls.CONTROLS_PATH
+    if os.path.isabs(name) or ".." in name.split("/"):
+        return wingbox_controls.ControlMap(name, "none", "", "", errors=("the path leaves the repository",))
+    if base:
+        done = subprocess.run(["git", "cat-file", "blob", f"{base}:{name}"], cwd=root, capture_output=True)
+        if done.returncode == 0:
+            return wingbox_controls.read(done.stdout, name, "base", base)
+    try:
+        return wingbox_controls.read((Path(root) / name).read_bytes(), name, "head")
+    except OSError:
+        if not given:
+            return None
+        return wingbox_controls.ControlMap(name, "none", "", "", errors=("the file is not in the base commit and not in the checkout",))
+
+
 def merge_base(root: str, report: Report) -> str:
     """The commit the change is compared with: the merge base of the base and the head; "" when git has none."""
     done = _run(["git", "merge-base", report.base, "HEAD" if report.head == WORKING_TREE else report.head], root)
@@ -635,18 +658,21 @@ def with_test_results(report: Report, env: Any, root: str) -> Report:
     """The report with the test reports the job hands over (the patterns of WINGBOX_TEST_RESULTS, one per
     line, looked for under WINGBOX_TEST_RESULTS_ROOT, else under the repository) and with the tests the
     manifest of the repository requires for this change (WINGBOX_REQUIRED_TESTS, else the default place).
-    Each report is judged by what the job knows of itself (test_origin); a refused one gives no case."""
+    Each report is judged by what the job knows of itself (test_origin); a refused one gives no case. The
+    control mapping of the repository (WINGBOX_CONTROLS, else the default place) is read the same way."""
     patterns = [p.strip() for p in env.get("WINGBOX_TEST_RESULTS", "").splitlines() if p.strip()]
     origin = test_origin(env, report)
     cases, reports, errors = read_test_results(env.get("WINGBOX_TEST_RESULTS_ROOT") or root, patterns, origin)
-    manifest = read_manifest(root, env.get("WINGBOX_REQUIRED_TESTS", ""), merge_base(root, report))
+    base = merge_base(root, report)
+    manifest = read_manifest(root, env.get("WINGBOX_REQUIRED_TESTS", ""), base)
     required = (wingbox_tests.required_for(manifest.groups, [changed.path for changed in report.changed] + list(report.skipped))
                 if manifest is not None else ())
     names = [test.shown for test in tests_to_run(report)] + [item.test for item in required]
     functions = go_test_functions(root, names, list(cases)) if cases else ()
     return dataclasses.replace(report, test_cases=cases, test_reports=reports, test_report_errors=errors, test_functions=functions,
                                tests_manifest=manifest, required_tests=required, test_origin=origin if patterns or origin.command else None,
-                               test_step_outcome=step_outcome(env) or "")
+                               test_step_outcome=step_outcome(env) or "",
+                               controls_map=read_controls(root, env.get("WINGBOX_CONTROLS", ""), base))
 
 
 def copy_map(root: str, folder: str) -> str:

@@ -1,5 +1,118 @@
 # Log
 
+## 2026-11-19: a control mapping and its check against a record (issue #22)
+
+What changed
+
+- `wingbox_controls.py` (new, pure, standard library only, no import of another module of this repository):
+  `parse` and `read` (the file `.wingbox/controls.yaml`, format `wingbox-controls/1`, a YAML subset read line
+  by line in the style of the manifest of required tests; anything outside the subset refuses the whole file
+  with the line), `evaluate` (the `controls` object of a record), `evaluate_control`, `scope_gaps`, `verdict`,
+  `state_of`, `counts`, `lines` (the evaluation for a reader) and `ok`.
+- States: `supported`, `not-supported`, `incomplete`, `not-evaluated`. Nineteen reason codes, each with a
+  fixed state (`REASONS`). Methods: `static-analysis`, `executed-test`, `configuration-check` (evaluated),
+  `document-review`, `human-judgement`, `operational-record` (not evaluated). Verdicts a control may require:
+  `boundaries-introduced`, `boundaries-existing`, `baseline`, `tests`, `coverage`, `policy-unchanged`.
+- `wingbox_evidence.build_evidence`: the record gains `controls`, evaluated at the day of `generated`.
+  `wingbox_facts.Report.controls_map`; `wingbox_pr.read_controls` reads the mapping from the base commit when
+  it holds it (as `read_manifest` does), else from the checkout; `with_test_results` calls it
+  (`WINGBOX_CONTROLS`, else the default place).
+- `wingbox_policy`: `.wingbox/controls.yaml` and the path of `WINGBOX_CONTROLS` are policy files of kind
+  `controls`; the report names the kind. `wingbox_package`: the same file in `POLICY_FILES`, the kind in
+  `POLICY_KINDS`, and `control(record)` fills the `control` object of the manifest.
+- `wingbox_evidence_cli.py controls (--record FILE | --package FILE) [--mapping FILE] [--date DAY] [--json]`.
+- Schemas: `schema/wingbox-controls-1.schema.json` (new); `controls` and the policy kind `controls` in
+  `schema/wingbox-evidence-2.schema.json`; `control` and the policy kind in `schema/wingbox-package-1.schema.json`.
+- `action.yml`: the input `controls`. The shell-runner template of GitLab hands `WINGBOX_CONTROLS` to the
+  container. `.github/workflows/test.yml`: the job `package` evaluates the fixture mapping against the
+  package of its run.
+- Fixtures `tests/fixtures/controls/` (the mapping of an invented team, its manifest of required tests, the
+  record of one run), `docs/controls/examples.md` (sixteen worked examples), README section "Control mapping".
+- Tests REQ-ACTION-210..234 (`tests/test_controls.py`).
+
+Why
+
+- Issue #22: a record did not say which control it is evidence for, and nothing checked that the evidence a
+  control names was produced. The rules come from the approved inputs of the design (wingbox#163): a mapping
+  describes the narrow claim an artifact supports; a file that exists, an edge of the graph, a test name or a
+  command that passed is no evidence that a control operates; nothing is concluded for a framework from a
+  count; a draft or unapproved mapping supports no claim; not applicable is never inferred; where the
+  judgement of a person is required the tool does not write one.
+
+Expectations of existing tests that changed with the behaviour
+
+- REQ-ACTION-172 (`tests/test_package.py`): the `control` object of a manifest without a mapping is
+  `{"mapping": "none", "path": "", "sha256": "", "commit": "", "name": "", "version": "", "owner": "",
+  "evaluated": "", "controls": []}`; it was a placeholder with the keys id, edition, scope, owner, applies
+  and risk, made for one control and never filled. The package form is not released yet.
+- REQ-ACTION-172 and REQ-ACTION-174 (`tests/test_package.py`): the policy files of a manifest list
+  `.wingbox/controls.yaml` (kind `controls`, here `not-in-commit`) after `.wingbox/config.yaml`.
+- REQ-ACTION-187 (`tests/test_package.py`): the command script also imports `wingbox_controls`.
+- REQ-ACTION-140 (`tests/test_policy.py`) is unchanged; its sibling check that README names every fixed
+  policy file (REQ-ACTION-150) now covers `.wingbox/controls.yaml` too.
+
+Decisions where the issue was open
+
+- The record holds no `reviewer` field: acceptance is a review record of the package (`review`), written by
+  a person through the command, not an empty field of the record.
+- The evidence a control may name is what a record holds as a verdict (six names, one field each) and the
+  groups of required tests. `eligible` is not a verdict a control can require: a team lists the verdicts it
+  means. `policy-unchanged` is the one configuration check a record gives.
+- A verdict is a word about the whole run and is not narrowed to the scope. The scope decides whether what
+  the run left out lies in it, and what counts depends on what the control requires. For every control: a
+  named part the run does not name, a tree that is not the commit named, a gap the reader does not know.
+  For a verdict that rests on the graph (the boundary verdicts, `tests`, `coverage`): a language left out,
+  a stale graph, a tool error, a changed file in the scope left out by `paths`. For a boundary verdict: a
+  part that was not checked, when the scope names it or a scope path may lie in it (only two fixed
+  beginnings that part ways show that it cannot). A control that requires only groups of required tests
+  rests on neither: on a small repository Wingbox checks no boundary rule (`too-few-files`), and a control
+  about recorded test cases is not incomplete for that (seen in the end-to-end test, REQ-ACTION-234).
+- A group of required tests holds only when the record has a test of the group and all passed. The record
+  lists a test once, under the first group that names it, so a group whose tests an earlier group names is
+  `required-tests-absent`: name in a control the group that the manifest lists first.
+- A change that touches no path of a required group gives `required-tests-absent`, and a verdict
+  `NOT_APPLICABLE` gives `verdict-not-applicable`: both incomplete. The tool has no "not applicable" state.
+- A mapping the base commit does not hold supports no claim (`mapping-not-in-base`): approved inputs come
+  from the protected baseline. By hand (`controls --mapping`) a mapping is evaluated as given, and a line
+  says whether it has the bytes the run evaluated.
+- Validity is judged at the day of the record (`generated`), or at `--date`; no clock is read. The first and
+  the last day are in force.
+- Approval fields are checked when a control is evaluated (`approval-incomplete`), not when the file is
+  read: one unfinished control does not refuse the mapping of the others. What the file must hold to be
+  read at all: title, status, method, claim, limits, a reference, a scope.
+- A plain value may not start with a digit (stricter than the manifest of required tests), so a date or a
+  version is always quoted and no YAML reader takes it for a date or a number.
+- `controls` ends with 1 when a control is not-supported or incomplete or the mapping is refused;
+  not-evaluated controls do not make it 1: they wait for a person.
+- `controls` is optional in the schema of the record, so a record of 1.5.0 still meets it.
+
+Not done
+
+- No state of a control fails the job, and the comment does not list the controls: the record and the
+  command do. An input for that can follow.
+- The edition in force of a framework is not checked: the tool does not know which edition a team runs
+  against (the assurance profile of wingbox#163). The record repeats the edition of each reference.
+- A scoped, approved "not applicable" (wingbox#163) has no form in the file yet.
+- The period report does not count states per control.
+- A package holds the mapping as the commit checked has it. When the change edits the mapping, the bytes
+  that were evaluated (the base's) are named by commit and SHA-256 and are not a member.
+- No mapping for a real framework: that is the matrix of issue #26, a reference example in draft status.
+
+Verification
+
+- `python3 -P -m unittest discover -s tests`: 282 tests, OK, 20 skipped (the ones that need Wingbox); before
+  the change 257 and 19. With Wingbox 0.15.0 in the Python that runs them (`WINGBOX_JOBS=1`): 282 tests, OK,
+  none skipped. `pyright *.py`: 0 errors.
+- The end-to-end test (REQ-ACTION-234) runs the whole script with a real Wingbox on a repository whose base
+  holds a mapping and whose change weakens it, and a second time against a base without a mapping.
+- Order of work: the module and its tests were written together before the first run; the expected states
+  and reason codes of the tests are written by hand. The first run of the new tests failed in two of them
+  through errors of the tests themselves (a miscounted number of sample values, and a word of the fixture's
+  own text taken for a word of the tool); no expectation of a state was changed to make a test pass.
+  The end-to-end run then showed a control about recorded test cases as `scope-not-covered` on a repository
+  too small for boundary rules; the rule of the scope was changed for that (see the decisions), and the
+  expectations of REQ-ACTION-218 were written again by hand for the new rule.
+
 ## 2026-11-19: evidence over a period: a ledger and a period report (issue #25)
 
 What changed

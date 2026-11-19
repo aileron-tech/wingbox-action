@@ -16,7 +16,7 @@ inputs:
     description: "none, violations (a layer, capability or pattern violation introduced by the pull request), not-checked (a part that could not be checked), strict (everything but a PASS or NOT_APPLICABLE result) or existing (the head holds a violation, one the pull request introduces or one that was there before)."
     default: none
   policy-change:
-    description: "fail or report: what a change of a file the check is judged by does (.wingbox/baseline.sexp, the rules of .wingbox/, a declared rule file, the workflow that runs the check, the required-tests manifest). fail: the job fails. report: the report names the change. Empty: fail with fail-on strict, else report. The findings are judged with these files as the base has them either way."
+    description: "fail or report: what a change of a file the check is judged by does (.wingbox/baseline.sexp, the rules of .wingbox/, a declared rule file, the workflow that runs the check, the required-tests manifest, the control mapping). fail: the job fails. report: the report names the change. Empty: fail with fail-on strict, else report. The findings are judged with these files as the base has them either way."
     default: ""
   comment:
     description: Write the report as one comment on the pull request, updated on each push.
@@ -56,6 +56,9 @@ inputs:
     default: "false"
   required-tests:
     description: "Path of the manifest of required tests, from the root of the repository; empty: .wingbox/required-tests.yaml when the repository has it. The manifest of the base commit counts."
+    default: ""
+  controls:
+    description: "Path of the control mapping, from the root of the repository; empty: .wingbox/controls.yaml when the repository has it. The record then says, for each control of the mapping, what the run supports: supported, not-supported, incomplete or not-evaluated, never that a control conforms. The mapping of the base commit counts."
     default: ""
   package:
     description: "true: also write the evidence package of the run, wingbox-package.zip beside the record: the record, the report, the plan, the test reports the record names as they are on disk, the policy files as the commit checked holds them and the schemas, with a manifest of every member. An incomplete package fails the step."
@@ -183,6 +186,7 @@ runs:
         WINGBOX_TEST_RESULTS: ${{ inputs.test-results }}
         WINGBOX_REQUIRE_TESTS: ${{ inputs.require-tests }}
         WINGBOX_REQUIRED_TESTS: ${{ inputs.required-tests }}
+        WINGBOX_CONTROLS: ${{ inputs.controls }}
         WINGBOX_TEST_COMMAND: ${{ inputs.test-command }}
         WINGBOX_REQUIRE_TEST_PROVENANCE: ${{ inputs.require-test-provenance }}
         WINGBOX_TEST_STEP_OUTCOME: ${{ inputs.test-step-outcome }}

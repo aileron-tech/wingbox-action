@@ -1,0 +1,263 @@
+# The control mapping of an invented team, the Lantern team, for its shop repository.
+# Every id, title and reference here is invented: the references name the team's own policy, not a standard.
+format: wingbox-controls/1
+
+mapping:
+  name: "Lantern team control map"
+  version: "2026.1"
+  owner: "Engineering lead"
+
+controls:
+  SDLC-03:
+    title: "Changes are checked against the architecture rules"
+    status: approved
+    approver: "Head of engineering"
+    approval: "CAB-2026-014"
+    valid-from: "2026-01-01"
+    valid-until: "2026-12-31"
+    risk: "RISK-07"
+    method: static-analysis
+    claim: "The change introduces no violation of the declared architecture rules, and every part was looked at."
+    limits: "Does not show that the rules are the right ones, nor that a person reviewed the change."
+    references:
+      - framework: "Lantern security policy"
+        edition: "v3"
+        reference: "SP-7.2 Secure design"
+      - framework: "Customer assurance questionnaire"
+        edition: "2026"
+        reference: "Q-14"
+    scope-paths:
+      - "src/**"
+    requires-verdicts:
+      - boundaries-introduced
+      - coverage
+
+  SDLC-04:
+    title: "No architecture violation stays without an accepted exception that has an end date"
+    status: approved
+    approver: "Head of engineering"
+    approval: "CAB-2026-014"
+    valid-from: "2026-01-01"
+    valid-until: "2026-12-31"
+    risk: "RISK-07"
+    method: static-analysis
+    claim: "The head holds no violation from before the change, and no accepted exception is past its end date."
+    limits: "Does not show that each accepted exception was a sound decision."
+    references:
+      - framework: "Lantern security policy"
+        edition: "v3"
+        reference: "SP-7.3 Exceptions"
+    scope-paths:
+      - "src/**"
+    requires-verdicts:
+      - boundaries-existing
+      - baseline
+
+  SDLC-05:
+    title: "Billing changes pass the billing tests"
+    status: approved
+    approver: "Head of engineering"
+    approval: "CAB-2026-015"
+    valid-from: "2026-01-01"
+    valid-until: "2026-12-31"
+    risk: "RISK-02"
+    method: executed-test
+    claim: "Every test the billing group requires for this change has a passing record in the test reports of the run."
+    limits: "Does not show that the billing tests are sufficient, nor what the tests assert."
+    references:
+      - framework: "Lantern security policy"
+        edition: "v3"
+        reference: "SP-8.1 Testing before release"
+    scope-paths:
+      - src/billing/
+    requires-tests:
+      - billing
+
+  SDLC-06:
+    title: "Every change passes the tests that use what it changed"
+    status: approved
+    approver: "Head of engineering"
+    approval: "CAB-2026-015"
+    valid-from: "2026-01-01"
+    valid-until: "2026-12-31"
+    risk: "RISK-02"
+    method: executed-test
+    claim: "Every recorded case of every test that uses what changed, and of every required test, passed."
+    limits: "Does not show that a test exists for each behaviour that changed."
+    references:
+      - framework: "Lantern security policy"
+        edition: "v3"
+        reference: "SP-8.1 Testing before release"
+    scope-paths:
+      - "src/**"
+    requires-verdicts:
+      - tests
+
+  SDLC-07:
+    title: "A change does not edit the files it is checked by"
+    status: approved
+    approver: "Head of engineering"
+    approval: "CAB-2026-016"
+    valid-from: "2026-01-01"
+    valid-until: "2026-12-31"
+    risk: "RISK-11"
+    method: configuration-check
+    claim: "The change edits no rule file, baseline, manifest, mapping or workflow that the check is judged by."
+    limits: "Does not show who may edit those files, which the code host records."
+    references:
+      - framework: "Lantern security policy"
+        edition: "v3"
+        reference: "SP-5.4 Separation of duties"
+    scope-paths:
+      - .wingbox/
+      - .github/workflows/
+    requires-verdicts:
+      - policy-unchanged
+
+  SDLC-08:
+    title: "Catalog changes pass the catalog tests"
+    status: draft
+    risk: "RISK-02"
+    method: executed-test
+    claim: "Every test the catalog group requires for this change has a passing record in the test reports of the run."
+    limits: "Does not show that the catalog tests are sufficient."
+    references:
+      - framework: "Lantern security policy"
+        edition: "v3"
+        reference: "SP-8.1 Testing before release"
+    scope-paths:
+      - src/catalog/
+    requires-tests:
+      - catalog
+
+  SDLC-09:
+    title: "API changes are checked against the architecture rules"
+    status: approved
+    approver: "Head of engineering"
+    approval: "CAB-2025-031"
+    valid-from: "2025-01-01"
+    valid-until: "2025-12-31"
+    risk: "RISK-07"
+    method: static-analysis
+    claim: "The change introduces no violation of the declared architecture rules."
+    limits: "Does not show that the rules are the right ones."
+    references:
+      - framework: "Lantern security policy"
+        edition: "v2"
+        reference: "SP-6.1 Secure design"
+    scope-paths:
+      - src/api/
+    requires-verdicts:
+      - boundaries-introduced
+
+  SDLC-10:
+    title: "Each change is reviewed by a second engineer"
+    status: approved
+    approver: "Head of engineering"
+    approval: "CAB-2026-017"
+    valid-from: "2026-01-01"
+    valid-until: "2026-12-31"
+    risk: "RISK-11"
+    method: human-judgement
+    claim: "A second engineer read the change and approved it."
+    limits: "The run records no review: the approval is a record of the code host."
+    references:
+      - framework: "Lantern security policy"
+        edition: "v3"
+        reference: "SP-5.4 Separation of duties"
+    scope-paths:
+      - "src/**"
+
+  SDLC-11:
+    title: "The architecture description is reviewed each quarter"
+    status: approved
+    approver: "Head of engineering"
+    approval: "CAB-2026-017"
+    valid-from: "2026-01-01"
+    valid-until: "2026-12-31"
+    risk: "RISK-07"
+    method: document-review
+    claim: "The architecture description was read against the code and signed off."
+    limits: "The run reads no document."
+    references:
+      - framework: "Lantern security policy"
+        edition: "v3"
+        reference: "SP-7.1 Architecture description"
+    scope-paths:
+      - docs/architecture.md
+
+  SDLC-12:
+    title: "Every change of the period has a record"
+    status: approved
+    approver: "Head of engineering"
+    approval: "CAB-2026-018"
+    valid-from: "2026-01-01"
+    valid-until: "2026-12-31"
+    risk: "RISK-12"
+    method: operational-record
+    claim: "Each commit of the default branch in the period has a record of the check."
+    limits: "One run cannot show a period: the ledger and its period report do."
+    references:
+      - framework: "Lantern security policy"
+        edition: "v3"
+        reference: "SP-9.2 Records of change"
+    scope-paths:
+      - "src/**"
+
+  SDLC-13:
+    title: "Web front end changes are checked against the rules of the front end"
+    status: approved
+    approver: "Head of engineering"
+    approval: "CAB-2026-014"
+    valid-from: "2026-01-01"
+    valid-until: "2026-12-31"
+    risk: "RISK-07"
+    method: static-analysis
+    claim: "The change introduces no violation of the declared rules of the web part."
+    limits: "Does not show that the rules of the web part are complete."
+    references:
+      - framework: "Lantern security policy"
+        edition: "v3"
+        reference: "SP-7.2 Secure design"
+    scope-parts:
+      - web
+    requires-verdicts:
+      - boundaries-introduced
+
+  SDLC-14:
+    title: "Tax rules are covered by tests"
+    status: approved
+    approver: "Head of engineering"
+    approval: "CAB-2026-019"
+    valid-from: "2026-01-01"
+    valid-until: "2026-12-31"
+    risk: "RISK-02"
+    method: executed-test
+    claim: "The tax rules have tests that ran."
+    limits: "Names no evidence yet."
+    references:
+      - framework: "Lantern security policy"
+        edition: "v3"
+        reference: "SP-8.1 Testing before release"
+    scope-paths:
+      - src/billing/tax.py
+
+  SDLC-15:
+    title: "Catalog changes are checked against the architecture rules from the second half of the year"
+    status: approved
+    approver: "Head of engineering"
+    approval: "CAB-2026-020"
+    valid-from: "2026-07-01"
+    valid-until: "2027-06-30"
+    risk: "RISK-07"
+    method: static-analysis
+    claim: "The change introduces no violation of the declared architecture rules."
+    limits: "Does not show that the rules are the right ones."
+    references:
+      - framework: "Lantern security policy"
+        edition: "v4"
+        reference: "SP-7.2 Secure design"
+    scope-paths:
+      - src/catalog/
+    requires-verdicts:
+      - boundaries-introduced
