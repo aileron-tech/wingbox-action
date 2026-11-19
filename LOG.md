@@ -1,5 +1,16 @@
 # Log
 
+## 2026-11-19: the check on this repository's own pull requests
+
+What changed
+
+- `.github/workflows/wingbox.yml`: the released action (`@v1`) comments on every pull request of this
+  repository. Default settings; it fails no job.
+
+Why
+
+- The maintainer asked for the check on our own builds.
+
 ## 2026-11-19: five review remarks (issues #7 to #11)
 
 What changed
