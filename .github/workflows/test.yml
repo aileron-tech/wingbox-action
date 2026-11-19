@@ -77,3 +77,121 @@ jobs:
         shell: bash
         working-directory: ${{ runner.temp }}/fixture
         run: test -z "$(git status --porcelain)"
+  # The check job of examples/evidence-handover.yml with a test step that fails: the check still runs, its
+  # record says that the tests failed, and the next job receives it. The last step of the example fails the
+  # job; here a step checks the same condition instead, so that this workflow stays green.
+  evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Fixture repository
+        id: fixture
+        shell: bash
+        run: python tests/make_fixture.py "$RUNNER_TEMP/fixture" >> "$GITHUB_OUTPUT"
+      - name: A test step that fails, its report cut short
+        id: tests
+        continue-on-error: true
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/fixture/test-results"
+          printf '<testsuites><testsuite name="pytest"><testcase' > "$RUNNER_TEMP/fixture/test-results/junit.xml"
+          exit 1
+      - name: Run the action
+        id: wingbox
+        if: ${{ !cancelled() }}
+        uses: ./
+        with:
+          working-directory: ${{ runner.temp }}/fixture
+          base: ${{ steps.fixture.outputs.base }}
+          head: ${{ steps.fixture.outputs.head }}
+          comment: "false"
+          test-results: test-results/*.xml
+          test-step-outcome: ${{ steps.tests.outcome }}
+          test-command: exit 1
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: wingbox-evidence
+          path: |
+            ${{ steps.wingbox.outputs.evidence }}
+            ${{ steps.wingbox.outputs.report }}
+            ${{ steps.wingbox.outputs.plan }}
+          retention-days: 1
+      - name: The record says that the tests failed
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          EVIDENCE: ${{ steps.wingbox.outputs.evidence }}
+          TESTS_EVIDENCE: ${{ steps.wingbox.outputs.tests-evidence }}
+        run: |
+          python -P tests/check_evidence.py "$EVIDENCE" --evidence failed --outcome failure
+          test "$TESTS_EVIDENCE" = failed
+      - name: The last step of the example would fail the job
+        id: red
+        if: ${{ steps.tests.outcome != 'success' }}
+        shell: bash
+        run: echo "red=true" >> "$GITHUB_OUTPUT"
+      - name: Check that it would
+        shell: bash
+        env:
+          RED: ${{ steps.red.outputs.red }}
+        run: test "$RED" = true
+  # The receiving end of that record: the artifact is there, and the hand-over command of the example sends
+  # it to a stand-in server.
+  evidence-received:
+    needs: evidence
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: wingbox-evidence
+          path: received
+      - name: The record arrived and is handed over
+        shell: bash
+        run: python -P tests/check_evidence.py received/wingbox-evidence.json --evidence failed --outcome failure --hand-over
+  # An install that fails: the action fails, and its last step still leaves a record that says the check
+  # did not run.
+  not-run:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run the action with a wingbox release that does not exist
+        id: wingbox
+        continue-on-error: true
+        uses: ./
+        with:
+          version: not-a-release
+          base: ${{ github.sha }}
+          head: ${{ github.sha }}
+          comment: "false"
+          test-step-outcome: failure
+      - name: The action failed and left the record
+        shell: bash
+        env:
+          OUTCOME: ${{ steps.wingbox.outcome }}
+          EVIDENCE: ${{ steps.wingbox.outputs.evidence }}
+          RESULT: ${{ steps.wingbox.outputs.result }}
+          REASONS: ${{ steps.wingbox.outputs.reasons }}
+        run: |
+          test "$OUTCOME" = failure
+          python -P tests/check_evidence.py "$EVIDENCE" --evidence failed --outcome failure --reason check-did-not-run
+          test "$RESULT" = UNKNOWN
+          test "$REASONS" = check-did-not-run

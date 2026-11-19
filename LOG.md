@@ -1,5 +1,49 @@
 # Log
 
+## 2026-11-19: a record also when the tests fail or the check does not run (issue #20)
+
+What changed
+
+- Input `test-step-outcome` (`WINGBOX_TEST_STEP_OUTCOME`; `wingbox_pr.step_outcome` reads it, another
+  value than `success`, `failure`, `cancelled`, `skipped` ends the run with status 2). `Report.
+  test_step_outcome`; `tests_summary`: `failed` after `failure` whatever the reports hold, not complete
+  after `cancelled` or `skipped`; `tests_status` and `tests_failed` fail on it; `tests.step-outcome` in
+  the record, `(test-step :outcome ..)` in the plan, a sentence in the comment.
+- `--did-not-run` for both scripts: `wingbox_pr.not_run_report` (`Report.did_not_run`; `result` returns
+  UNKNOWN, error, `check-did-not-run` for it), `did_not_run` writes the record and the outputs. No
+  Wingbox, git or repository needed.
+- `action.yml`: a last step `did-not-run` with `if: ${{ always() && steps.check.outputs.evidence == '' }}`
+  runs `wingbox_pr.py --did-not-run` by the Python that was set up, else the one of the runner; the
+  outputs `evidence`, `result`, `execution`, `reasons` fall back on it.
+- `examples/evidence-handover.yml`: the test step (`id: tests`, `continue-on-error: true`), the check
+  (`if: ${{ !cancelled() }}`, `test-step-outcome`, `test-command`), the upload (`if: ${{ !cancelled() }}`),
+  a last step that fails the job. README: the same form.
+- GitLab templates: `WINGBOX_TEST_SCRIPT` runs first inside `script` (`tests_status`), the check runs
+  (`check_status`), the job ends with the tests' status, else the check's. Without a record after a failed
+  check the script is asked for one (`--did-not-run`); when that cannot run, the shell writes
+  `{"result": {"boundaries": "UNKNOWN", "execution": "error", "reasons": ["check-did-not-run"]}}`.
+- `tests/check_evidence.py`: what a record must say, and its hand-over with the command of the example.
+  `.github/workflows/test.yml`: jobs `evidence`, `evidence-received` and `not-run` run these on GitHub.
+- Tests REQ-ACTION-135..139 (`tests/test_failing_tests.py`); the GitLab scripts are run by a POSIX shell
+  with stand-ins for pip, git, python and docker.
+
+Expectations of existing tests that changed with the behaviour
+
+- REQ-ACTION-104: the output `evidence` of action.yml is that of the check step, else of the step that
+  records a check that did not run.
+
+Why
+
+- Issue #20: when the test step failed, the check step was skipped and the hand-over job found no
+  artifact; the same when the install failed, and in GitLab when `before_script` failed.
+
+Not done
+
+- The red job of the example is not produced in this repository's workflow (a red job would fail the
+  checks of every pull request): the workflow checks the condition of the example's last step instead.
+- The smallest record the shell of a GitLab job writes names no run; it is written only when the scripts
+  of this repository could not be fetched or run.
+
 ## 2026-11-19: where a test report comes from (issue #17)
 
 What changed

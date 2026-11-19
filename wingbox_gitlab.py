@@ -157,16 +157,34 @@ def _inside(root: str, out: Path) -> tuple[str, ...]:
         return ()
 
 
+def did_not_run(env: Mapping[str, str], out: Path) -> int:
+    """Write the record of a check that did not run, with wingbox.env; 0. The job's script calls this when
+    the check left no record (the install failed), so that the artifacts always hold one."""
+    chosen = commits(env)
+    base, head = (chosen.base, chosen.head) if isinstance(chosen, Compare) else ("", env.get("CI_COMMIT_SHA", ""))
+    report = pr.not_run_report(base, head, env)
+    (out / "wingbox.env").write_text(dotenv(pr.outputs(report)), encoding="utf-8", newline="\n")
+    path = pr.write_evidence(report, gitlab_run(env), str(out), {})
+    print(f"Wingbox: the check did not run; the record that says so is {path}")
+    return 0
+
+
 def main() -> int:
-    env = with_keys(sys.argv[1:], os.environ)
+    args = sys.argv[1:]
+    env = with_keys([arg for arg in args if arg != pr.NOT_RUN_KEY], os.environ)
     root = os.path.abspath(env.get("WINGBOX_ROOT") or os.getcwd())
+    out = out_folder(env, root)
+    out.mkdir(parents=True, exist_ok=True)
+    if pr.NOT_RUN_KEY in args:
+        return did_not_run(env, out)
     fail_on = env.get("WINGBOX_FAIL_ON", "none")
     if fail_on not in pr.FAIL_ON:
         print(f"ERROR: WINGBOX_FAIL_ON must be one of {', '.join(pr.FAIL_ON)}, not {fail_on!r}")
         return 2
+    if env.get("WINGBOX_TEST_STEP_OUTCOME", "") and pr.step_outcome(env) is None:
+        print(f"ERROR: {pr.OUTCOME_ERROR}, not {env.get('WINGBOX_TEST_STEP_OUTCOME')!r} (WINGBOX_TEST_STEP_OUTCOME)")
+        return 2
     chosen = commits(env)
-    out = out_folder(env, root)
-    out.mkdir(parents=True, exist_ok=True)
     if isinstance(chosen, Skip):
         # The job's dotenv report needs its file also when there is nothing to compare.
         (out / "wingbox.env").write_text(dotenv({"result": "NOT_APPLICABLE", "execution": "ok", "reasons": chosen.reason}),

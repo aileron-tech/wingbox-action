@@ -156,6 +156,8 @@ class Report:
     tests_manifest: Optional[Manifest] = None                        # the manifest of required tests; None: the repository has none
     required_tests: tuple[Required, ...] = field(default=())         # the tests it requires for this change
     test_origin: Optional[Origin] = None                             # what the job knows of itself, the test reports were judged by
+    test_step_outcome: str = ""                                      # how the test step of the job ended (STEP_OUTCOMES); "": not said
+    did_not_run: bool = False                                        # the check did not run (its install failed): nothing was looked at
     checked_modules: Optional[int] = None                            # modules the boundary rules were checked on, when known
     skipped_languages: tuple[tuple[str, int], ...] = field(default=())   # (language, files) left out: its parser is not installed
 

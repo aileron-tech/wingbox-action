@@ -42,6 +42,9 @@ inputs:
   require-tests:
     description: "true: fail the job unless every test that uses what changed, and every test the manifest requires for the change, is passed in the test results (every case recorded for it passed). strict: as true, and fail a change of source code for which no test was found. It does not change the result of the boundary check."
     default: "false"
+  test-step-outcome:
+    description: "How the test step of the job ended: success, failure, cancelled or skipped (give it steps.<id>.outcome of a test step with continue-on-error). Recorded in the evidence record; after failure the test evidence is failed whatever the test results hold."
+    default: ""
   test-command:
     description: "The command of the test step that wrote the test results. Recorded verbatim in the evidence record; not run."
     default: ""
@@ -75,17 +78,17 @@ outputs:
     description: Path of the review plan (S-expression lines) for a reviewing agent.
     value: ${{ steps.check.outputs.plan }}
   evidence:
-    description: Path of the evidence record of the run (wingbox-evidence.json, shape in schema/wingbox-evidence-2.schema.json).
-    value: ${{ steps.check.outputs.evidence }}
+    description: Path of the evidence record of the run (wingbox-evidence.json, shape in schema/wingbox-evidence-2.schema.json). Written also when the check did not run.
+    value: ${{ steps.check.outputs.evidence || steps.did-not-run.outputs.evidence }}
   result:
     description: "Result of the boundary check: PASS, FAIL, UNKNOWN or NOT_APPLICABLE. A part that was not checked or a tool error is UNKNOWN, never PASS."
-    value: ${{ steps.check.outputs.result }}
+    value: ${{ steps.check.outputs.result || steps.did-not-run.outputs.result }}
   execution:
     description: "ok, or error when a wingbox command ended abnormally."
-    value: ${{ steps.check.outputs.execution }}
+    value: ${{ steps.check.outputs.execution || steps.did-not-run.outputs.execution }}
   reasons:
     description: The reasons of the result, separated by semicolons; empty for PASS.
-    value: ${{ steps.check.outputs.reasons }}
+    value: ${{ steps.check.outputs.reasons || steps.did-not-run.outputs.reasons }}
   tests-to-run:
     description: Number of tests that use what the pull request changes.
     value: ${{ steps.check.outputs.tests-to-run }}
@@ -145,6 +148,7 @@ runs:
         WINGBOX_REQUIRED_TESTS: ${{ inputs.required-tests }}
         WINGBOX_TEST_COMMAND: ${{ inputs.test-command }}
         WINGBOX_REQUIRE_TEST_PROVENANCE: ${{ inputs.require-test-provenance }}
+        WINGBOX_TEST_STEP_OUTCOME: ${{ inputs.test-step-outcome }}
         WINGBOX_TOKEN: ${{ inputs.github-token }}
     - name: Upload the map
       if: ${{ !cancelled() && inputs.upload-map == 'true' && steps.check.outputs.map != '' }}
@@ -153,3 +157,20 @@ runs:
         name: wingbox-map
         path: ${{ steps.check.outputs.map }}
         if-no-files-found: warn
+    # A record also when the check did not run (the install failed, or the check ended before it wrote one):
+    # a job that hands records over then always has a document. By the Python of the runner when the setup failed.
+    - name: Record that the check did not run
+      id: did-not-run
+      if: ${{ always() && steps.check.outputs.evidence == '' }}
+      shell: bash
+      run: |
+        python_path="$WINGBOX_PYTHON"
+        if [ -z "$python_path" ]; then python_path="$(command -v python3 || command -v python)"; fi
+        "$python_path" -P "$GITHUB_ACTION_PATH/wingbox_pr.py" --did-not-run
+      env:
+        WINGBOX_PYTHON: ${{ steps.python.outputs.python-path }}
+        WINGBOX_VERSION: ${{ inputs.version }}
+        WINGBOX_BASE: ${{ inputs.base }}
+        WINGBOX_HEAD: ${{ inputs.head }}
+        WINGBOX_TEST_STEP_OUTCOME: ${{ inputs.test-step-outcome }}
+        WINGBOX_TEST_COMMAND: ${{ inputs.test-command }}

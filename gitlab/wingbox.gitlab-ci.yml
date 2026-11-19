@@ -22,12 +22,32 @@ wingbox:
     WINGBOX_ACTION_REF: "v1"          # the tag, branch or commit of aileron-tech/wingbox-action the scripts come from
     WINGBOX_HOPS: "2"
     WINGBOX_FAIL_ON: "none"           # none, violations, not-checked or strict
+    WINGBOX_TEST_SCRIPT: ""           # the command that runs your tests in this job and writes JUnit XML (see the README)
   script:
-    - pip install --disable-pip-version-check --quiet "wingbox[all]==$WINGBOX_VERSION"
+    # The tests first, with their status kept: the check runs whatever they say, learns how they ended,
+    # and the job ends with the tests' status.
+    - tests_status=0
+    - if [ -n "$WINGBOX_TEST_SCRIPT" ]; then sh -c "$WINGBOX_TEST_SCRIPT" || tests_status=$?; fi
+    - if [ -n "$WINGBOX_TEST_SCRIPT" ]; then export WINGBOX_TEST_COMMAND="$WINGBOX_TEST_SCRIPT" WINGBOX_TEST_STEP_OUTCOME=success; fi
+    - if [ "$tests_status" -ne 0 ]; then export WINGBOX_TEST_STEP_OUTCOME=failure; fi
     - WINGBOX_TOOLS="$(mktemp -d)"
-    - git clone --quiet https://github.com/aileron-tech/wingbox-action.git "$WINGBOX_TOOLS/action"
-    - git -C "$WINGBOX_TOOLS/action" checkout --quiet "$WINGBOX_ACTION_REF"
-    - python "$WINGBOX_TOOLS/action/wingbox_gitlab.py"
+    - check_status=0
+    - >
+      pip install --disable-pip-version-check --quiet "wingbox[all]==$WINGBOX_VERSION"
+      && git clone --quiet https://github.com/aileron-tech/wingbox-action.git "$WINGBOX_TOOLS/action"
+      && git -C "$WINGBOX_TOOLS/action" checkout --quiet "$WINGBOX_ACTION_REF"
+      && python "$WINGBOX_TOOLS/action/wingbox_gitlab.py"
+      || check_status=$?
+    # A record also when the check did not run (the install or the download failed): by the script, and
+    # when that cannot run either, the smallest record, written here.
+    - >
+      if [ "$check_status" -ne 0 ] && [ ! -s wingbox-out/wingbox-evidence.json ]; then
+      python -P "$WINGBOX_TOOLS/action/wingbox_gitlab.py" --did-not-run
+      || { mkdir -p wingbox-out;
+      printf '%s\n' '{"result": {"boundaries": "UNKNOWN", "execution": "error", "reasons": ["check-did-not-run"]}}' > wingbox-out/wingbox-evidence.json; };
+      fi
+    - if [ "$tests_status" -ne 0 ]; then exit "$tests_status"; fi
+    - exit "$check_status"
   artifacts:
     when: always
     expire_in: 30 days

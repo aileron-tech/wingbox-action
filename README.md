@@ -303,12 +303,28 @@ the job runs its tests before the check and they write JUnit XML reports,
 hand these over:
 
 ```yaml
-      - run: python -P -m pytest --junitxml=test-results/junit.xml
+      - id: tests
+        run: python -P -m pytest --junitxml=test-results/junit.xml
+        continue-on-error: true      # failing tests must not end the job before the check
       - uses: aileron-tech/wingbox-action@v1
+        if: ${{ !cancelled() }}
         with:
           test-results: test-results/*.xml
+          test-step-outcome: ${{ steps.tests.outcome }}
           require-tests: true     # optional: fail unless every test that uses what changed has a passed record
+      - if: ${{ steps.tests.outcome != 'success' }}
+        run: exit 1                  # the job fails when the tests did
 ```
+
+A test step that fails ends a job, and every later step is skipped: the check
+would leave no report and no record for the run that needs them most. So the
+test step gets `continue-on-error: true`, the check runs unless the job was
+cancelled, and a last step fails the job when the tests did not succeed.
+`test-step-outcome` tells the check how the test step ended (`success`,
+`failure`, `cancelled` or `skipped`, what `steps.<id>.outcome` gives). It is
+recorded (`tests.step-outcome`), and after `failure` the test evidence is
+`failed` whatever the reports hold: a report may be missing or cut short.
+After `cancelled` or `skipped` it is not `complete`.
 
 Each `run-test` line of the plan then says what the reports hold about that
 test, with the number of recorded cases:
@@ -451,7 +467,7 @@ The test evidence of a run is one word, the output `tests-evidence` and
 |---|---|
 | `none` | no `test-results` were given |
 | `none-found` | reports were given, no test uses what changed and none is required: the reports say nothing about this change |
-| `failed` | a test to run or a required test has a failed case |
+| `failed` | a test to run or a required test has a failed case, or the test step of the job failed (`test-step-outcome`) |
 | `incomplete` | one of them has a case that was skipped or did not run, or no record; or the manifest could not be read |
 | `complete` | every recorded case of every test to run and of every required test passed |
 
@@ -474,11 +490,18 @@ report and of the plan written beside it. Its shape is
 (`"schema": "wingbox-evidence/2"`); a record of 1.4 says `wingbox-evidence/1`
 and follows [`schema/wingbox-evidence-1.schema.json`](schema/wingbox-evidence-1.schema.json).
 
+A record is written also when the check did not run. When the install of
+Wingbox fails, or the check ends before it wrote its record, the last step of
+the action writes one with the result `UNKNOWN`, the execution `error` and the
+one reason `check-did-not-run`, the run, the commits named, the outcome of the
+test step and the test command. The output `evidence` names it.
+
 [`examples/evidence-handover.yml`](examples/evidence-handover.yml) is a
 workflow in two jobs: the check, which reads the pull request and holds no
 secret but the default token, and a hand-over job that never checks out the
 code, takes the record as an artifact and posts it to an HTTP endpoint with a
-secret only that job holds.
+secret only that job holds. Its test step, check and upload are written as
+above, so a run whose tests fail hands over its record too.
 
 ### The diagram
 
@@ -513,6 +536,7 @@ same pull request always gives the same diagram.
 | `test-results` | none | Glob patterns of the JUnit XML reports the test step of the job wrote, one per line (`**` crosses folders). See [Evidence that the tests ran](#evidence-that-the-tests-ran). |
 | `require-tests` | `false` | `true`: fail the job unless every test that uses what changed, and every required test, is `passed` in `test-results`. `strict`: as `true`, and fail a change of source code for which no test was found. |
 | `required-tests` | `.wingbox/required-tests.yaml` | Path of the manifest of required tests, from the root of the repository. See [Required tests](#required-tests). |
+| `test-step-outcome` | none | How the test step of the job ended: `success`, `failure`, `cancelled` or `skipped`. Give it `${{ steps.tests.outcome }}` of a test step with `continue-on-error: true`. After `failure` the test evidence is `failed`. |
 | `test-command` | none | The command of the test step that wrote the test results. Recorded verbatim in the evidence record; not run. |
 | `require-test-provenance` | `false` | Refuse a test report without a matching sidecar. See [Where a test report comes from](#where-a-test-report-comes-from). |
 | `github-token` | `github.token` | Token for the comment. |
@@ -527,7 +551,7 @@ same pull request always gives the same diagram.
 | `introduced-findings` | Number of boundary findings the pull request introduces. |
 | `not-checked-parts` | Number of parts `wingbox boundaries` could not check. |
 | `plan` | Path of the review plan (S-expression lines) on the runner. |
-| `evidence` | Path of the evidence record of the run (`wingbox-evidence.json`). |
+| `evidence` | Path of the evidence record of the run (`wingbox-evidence.json`). Written also when the check did not run. |
 | `result` | `PASS`, `FAIL`, `UNKNOWN` or `NOT_APPLICABLE`: the result of the boundary check. |
 | `execution` | `ok`, or `error` when a wingbox command ended abnormally. |
 | `reasons` | The reasons of the result, separated by semicolons; empty for `PASS`. |
@@ -588,6 +612,7 @@ wingbox:
     WINGBOX_HOPS: "2"
     WINGBOX_VERSION: "0.14.0"     # the wingbox release from PyPI
     WINGBOX_ACTION_REF: "v1"      # the tag, branch or commit of this repository the scripts come from
+    WINGBOX_TEST_SCRIPT: "pytest --junitxml=test-results/junit.xml"   # the tests of this job; they run first and their status is kept
     WINGBOX_TEST_RESULTS: "test-results/*.xml"   # JUnit XML reports of the tests this job ran before the check
     WINGBOX_REQUIRE_TESTS: "true"                # fail unless every test that uses what changed and every required test passed; or "strict"
     WINGBOX_REQUIRED_TESTS: "ci/required-tests.yaml"   # the manifest of required tests; default .wingbox/required-tests.yaml
@@ -595,9 +620,14 @@ wingbox:
     WINGBOX_REQUIRE_TEST_PROVENANCE: "true"      # refuse a test report without a matching sidecar
 ```
 
-The check runs in the `script` of the job; to hand over test reports, run the tests in
-`before_script` of the same job (or fetch them as artifacts of an earlier job) so the files are
-there when the check starts. See [Evidence that the tests ran](#evidence-that-the-tests-ran).
+To hand over test reports, let the job run the tests: `WINGBOX_TEST_SCRIPT` is the command that
+runs them (or fetch the reports as artifacts of an earlier job). The job runs it first, inside
+`script`, and keeps its status: the check runs whatever the tests say and records how they ended
+(`WINGBOX_TEST_STEP_OUTCOME`, `WINGBOX_TEST_COMMAND`), and the job ends with the tests' status,
+else with the status of the check. The artifacts are kept whatever the status. With the template
+for shell runners the tests run on the runner, before the container of the check. When the check
+cannot run (the install fails), `wingbox-out/wingbox-evidence.json` still holds a record, with
+the reason `check-did-not-run`. See [Evidence that the tests ran](#evidence-that-the-tests-ran).
 
 A cautious setup pins a commit in both places: the address of the include
 (`.../wingbox-action/<commit>/gitlab/...`) and `WINGBOX_ACTION_REF: "<commit>"`.

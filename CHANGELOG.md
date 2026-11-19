@@ -41,6 +41,21 @@
   status, the timestamp it states, its modification time, whether git tracks
   it, the commits it names and the state of its sidecar. The plan has
   `test-provenance`, `test-command` and `test-report-origin` lines.
+- New input `test-step-outcome`: how the test step of the job ended
+  (`steps.<id>.outcome`). It is recorded (`tests.step-outcome`); after
+  `failure` the test evidence is `failed` whatever the reports hold, and after
+  `cancelled` or `skipped` it is not `complete`. `require-tests` fails on it.
+- A record is written also when the check did not run (the install failed, or
+  the check ended before its record): result `UNKNOWN`, execution `error`,
+  reason `check-did-not-run`. The outputs `evidence`, `result`, `execution`
+  and `reasons` are then those of that record.
+- `examples/evidence-handover.yml` and the README show the workflow that
+  leaves a record when the tests fail: the test step with
+  `continue-on-error`, the check and the upload with `if: ${{ !cancelled() }}`,
+  and a last step that fails the job when the tests did not succeed.
+- GitLab templates: `WINGBOX_TEST_SCRIPT` runs the tests inside `script` with
+  their status kept; the check runs, and the job ends with the tests' status.
+  A record is left also when the install fails.
 - New input `test-command`: the command of the test step, recorded verbatim.
 - New input `require-test-provenance`: a report without a matching sidecar
   (`<report>.run.json`: commit, run id, attempt, command, SHA-256 of the
@@ -51,6 +66,9 @@
 
 ### Fixes
 
+- With the documented setup a failing test step ended the job before the
+  check: no report, no plan and no evidence record were written or handed
+  over.
 - Test evidence read `complete` when test results were given and no test
   uses what changed. That state is now `none-found`.
 - A test file with a passed and a skipped case was `passed`. A test is now

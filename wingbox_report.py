@@ -148,6 +148,8 @@ def result(report: Report) -> tuple[str, str, tuple[str, ...]]:
     The result never reads what was not checked as a pass. FAIL: the pull request introduces a blocking
     finding. UNKNOWN: a wingbox command ended abnormally (execution "error"), files of a language were left out of
     the graph (its parser is not installed), or a part of the repository was not checked. NOT_APPLICABLE: no source module outside the tests changed. PASS: none of these."""
+    if report.did_not_run:      # nothing was looked at: the record of such a run says only that
+        return "UNKNOWN", "error", ("check-did-not-run",)
     execution = "error" if report.tool_errors else "ok"
     errors = tuple(f"tool-error: {error}" for error in report.tool_errors)
     unchecked = tuple(f"not-checked: {part.part} ({part.reason})" for part in report.not_checked)
@@ -368,14 +370,20 @@ def tests_summary(report: Report) -> str:
     given, the graph found no test that uses what changed and the manifest requires none: the reports say
     nothing about this change. failed: a test to run or a required test has a failed case. incomplete: one
     has a case that was skipped or did not run, or has no record, or the manifest could not be read.
-    complete: every recorded case of every test to run and of every required test passed."""
+    complete: every recorded case of every test to run and of every required test passed.
+
+    The outcome of the test step of the job comes first: after `failure` the evidence is failed whatever the
+    reports hold (a report may be missing or cut short), and after `cancelled` or `skipped` it is not
+    complete."""
+    if report.test_step_outcome == "failure":
+        return "failed"
     found, needed = test_evidence(report), required_evidence(report)
     if found is None or needed is None:
         return "none"
     statuses = {item.status for item in (*found, *needed)}
     if wingbox_tests.FAILED in statuses:
         return "failed"
-    if statuses - {wingbox_tests.PASSED} or manifest_errors(report):
+    if statuses - {wingbox_tests.PASSED} or manifest_errors(report) or report.test_step_outcome in ("cancelled", "skipped"):
         return "incomplete"
     return "complete" if statuses else "none-found"
 
@@ -395,11 +403,11 @@ def evidence_counts(report: Report) -> tuple[str, str, str]:
 def tests_status(report: Report, require: bool, strict: bool = False) -> int:
     """1 when a passing record is required and missing: a test to run or a required test has none (no test
     report was given, or the test failed, was skipped in whole or in part, or is not in the reports), or the
-    manifest of required tests could not be read. A change no test was found for passes, unless strict and
-    the change holds source code outside the tests. Else 0."""
+    manifest of required tests could not be read, or the test step of the job did not succeed. A change no
+    test was found for passes, unless strict and the change holds source code outside the tests. Else 0."""
     if not require:
         return 0
-    if manifest_errors(report):
+    if manifest_errors(report) or report.test_step_outcome not in ("", "success"):
         return 1
     if not tests_to_run(report) and not report.required_tests:
         return 1 if strict and holds_source(report) else 0
@@ -552,7 +560,9 @@ def build_plan(report: Report) -> str:
         if read.source != "none":
             lines.append(f"(required-tests {_q(read.path)} :from {read.source}{f' :commit {read.commit}' if read.commit else ''} :sha256 {read.sha256})")
         lines += [f"(required-tests-error {_q(read.path)} :reason {_q(error)})" for error in read.errors]
-    if report.test_cases is not None:
+    if report.test_step_outcome:
+        lines.append(f"(test-step :outcome {report.test_step_outcome})")
+    if report.test_cases is not None or report.test_step_outcome:
         lines.append(f"(tests :evidence {tests_summary(report)})")
     case_lines = [f"(test-case {_q(item.test)} {_q(case.where)} {_q(case.name)} :status {case.status})"
                   for item in (*(recorded[test.shown] for test in tests_to_run(report) if test.shown in recorded), *(needed or ()))
@@ -736,6 +746,9 @@ def build_comment(report: Report, full: bool = False) -> str:
                          "(the job summary lists them all)")
         lines.append("")
 
+    if report.test_step_outcome not in ("", "success"):
+        lines += [f"The test step of the job ended with {_code(report.test_step_outcome)}: the test evidence is "
+                  + ("`failed`, whatever the reports hold." if report.test_step_outcome == "failure" else "not complete."), ""]
     to_run = tests_to_run(report)
     if to_run:
         shown_tests = to_run if full else to_run[:TESTS_LIMIT]

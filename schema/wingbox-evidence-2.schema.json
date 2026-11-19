@@ -83,6 +83,7 @@
       "required": ["evidence", "to-run", "reports"],
       "properties": {
         "evidence": {"type": "string", "enum": ["none", "none-found", "complete", "incomplete", "failed"], "description": "none: no test report was given. none-found: reports were given, no test that uses what changed was found and none is required: the reports say nothing about this change. failed: a test to run or a required test has a failed case. incomplete: one has a case that was skipped or did not run, or no record, or the manifest of required tests could not be read. complete: every recorded case of every test to run and of every required test passed."},
+        "step-outcome": {"type": "string", "enum": ["", "success", "failure", "cancelled", "skipped"], "description": "How the test step of the job ended (input test-step-outcome); empty when it was not said. After failure the evidence is failed whatever the reports hold."},
         "to-run": {
           "type": "array",
           "items": {
