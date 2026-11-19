@@ -11,7 +11,9 @@ SHA-256 of the manifest it reviewed, and a detached attestation of the manifest 
 (`ATTESTATION`) that this module leaves empty: signing is not done here.
 
 Three statements stay apart. The record states that a check ran and how it ended. A review states that a
-person accepted or rejected the evidence. That a control conforms is stated nowhere.
+person accepted or rejected the evidence. That a control conforms is stated nowhere: `control` repeats, for
+each control of the team's mapping, the state the record gives it (supported, not-supported, incomplete,
+not-evaluated), which is a statement about this evidence and not about the control.
 
 Pure: bytes in, bytes and values out. No file, no clock, no git, no network; the same members give the same
 archive bytes. The command script wingbox_evidence_cli.py is the I/O. Standard library only, and no import
@@ -38,8 +40,8 @@ SCHEMA_FILES = ("wingbox-evidence-2.schema.json", "wingbox-package-1.schema.json
 SIDECAR_ENDING = ".run.json"
 # The policy files with a fixed place, and what each is (the same as wingbox_policy.FIXED; a test keeps them equal).
 POLICY_FILES = {".wingbox/baseline.sexp": "baseline", ".wingbox/config.yaml": "rules", ".wingbox/learned.sexp": "rules",
-                ".wingbox/required-tests.yaml": "required-tests"}
-POLICY_KINDS = ("baseline", "rules", "declared-rules", "workflow", "required-tests", "named")
+                ".wingbox/required-tests.yaml": "required-tests", ".wingbox/controls.yaml": "controls"}
+POLICY_KINDS = ("baseline", "rules", "declared-rules", "workflow", "required-tests", "controls", "named")
 DECISIONS = ("accepted", "rejected")
 MAX_BYTES = 256 * 1024 * 1024    # of an archive, unless the caller gives another limit
 HARD_LIMIT = 0xFFFFFFFF          # the archive form has four bytes for a length
@@ -55,7 +57,8 @@ STATEMENTS = {
     "acceptance": "A review record states that a person accepted or rejected this evidence; the tool makes none.",
     "conformity": "Nothing in this package states that a control conforms.",
 }
-CONTROL = {"mapping": "none", "id": "", "edition": "", "scope": "", "owner": "", "applies": "", "risk": ""}
+# The `control` object of a manifest whose record evaluated no control mapping.
+CONTROL = {"mapping": "none", "path": "", "sha256": "", "commit": "", "name": "", "version": "", "owner": "", "evaluated": "", "controls": []}
 _COMMIT = re.compile(r"^[0-9a-f]{40,64}\Z")
 _REVIEW = re.compile(r"^reviews/(\d{4})\.json$")
 _SEGMENT = re.compile(r"^[A-Za-z0-9._%+=@,-]+$")
@@ -370,12 +373,14 @@ def _plain(path: str) -> str:
 def policy_files(record: Optional[Mapping[str, Any]], named: Sequence[tuple[str, str]] = ()) -> tuple[tuple[str, str], ...]:
     """(path, kind) of the policy files to ask the commit for, by path: the ones with a fixed place, the ones
     the record says the change edits, the manifest of required tests the record read, and the ones named by
-    whoever packs. The first kind found for a path stays."""
+    whoever packs. The first kind found for a path stays. The control mapping the record evaluated is asked
+    for at its path too."""
     found: dict[str, str] = dict(POLICY_FILES)
     if record:
         for change in record["policy"]["changed"]:
             found.setdefault(_plain(change["path"]), change["kind"])
         found.setdefault(_plain(record["tests"].get("manifest", {}).get("path", "")), "required-tests")
+        found.setdefault(_plain(record.get("controls", {}).get("mapping", {}).get("path", "")), "controls")
     for path, kind in named:
         found.setdefault(_plain(path), kind)
     found.pop("", None)
@@ -410,6 +415,23 @@ def checks(record: Optional[Mapping[str, Any]]) -> list[dict[str, Any]]:
                 "cases": [{"id": f"{case['where']}::{case['name']}", "outcome": OUTCOMES[case["status"]]} for case in test["records"]]}
     return ([one("required-test", test) for test in record["tests"].get("required", ())]
             + [one("uses-what-changed", test) for test in record["tests"]["to-run"]])
+
+
+def control(record: Optional[Mapping[str, Any]]) -> dict[str, Any]:
+    """The `control` object of a manifest, from the `controls` object of the record: the mapping that was
+    evaluated (where it was read from, its path, digest, commit, name, version and owner), the day it was
+    evaluated at, and each control with its id, title, state and reason codes. `mapping` is `none` with empty
+    values when the record evaluated no mapping, and `refused` when the mapping had errors. The states are
+    those of the record: none of them says that a control conforms."""
+    said = record.get("controls") if record else None
+    if not said or said["mapping"]["source"] == "none":
+        return {**CONTROL, "controls": []}
+    mapping = said["mapping"]
+    return {"mapping": "refused" if mapping["errors"] else mapping["source"], "path": mapping["path"], "sha256": mapping["sha256"],
+            "commit": mapping["commit"], "name": mapping["name"], "version": mapping["version"], "owner": mapping["owner"],
+            "evaluated": said["evaluated"],
+            "controls": [{"id": item["id"], "title": item["title"], "state": item["state"], "reasons": [reason["code"] for reason in item["reasons"]]}
+                         for item in said["controls"]]}
 
 
 def manifest(members: Mapping[str, bytes], given: Given, record_schema: Mapping[str, Any]) -> dict[str, Any]:
@@ -483,7 +505,7 @@ def manifest(members: Mapping[str, bytes], given: Given, record_schema: Mapping[
         "run": {"provider": run.get("provider", ""), "id": run.get("id", ""), "attempt": run.get("attempt", ""), "job": run.get("job", ""),
                 "change": run.get("change", ""), "url": run.get("url", "")},
         "retention": given.retention,
-        "control": dict(CONTROL),
+        "control": control(record),
         "stated": [{"name": name, "value": value} for name, value in given.stated],
         "policy": {"commit": commit, "read": read_commit, "files": files},
         "checks": checks(record),

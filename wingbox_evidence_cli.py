@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""wingbox-evidence: build, check and review the evidence package of a run, and keep the runs of a period.
+"""wingbox-evidence: build, check and review the evidence package of a run, keep the runs of a period, and
+evaluate a control mapping against a run.
 
     python wingbox_evidence_cli.py pack --run-dir DIR --out FILE [--repo DIR] [--reports-root DIR] [--job-log FILE]
                                         [--policy PATH]... [--workflow PATH]... [--stated NAME=VALUE]... [--retention TEXT]
@@ -8,6 +9,7 @@
     python wingbox_evidence_cli.py append --ledger FILE (--record FILE | --package FILE)
     python wingbox_evidence_cli.py period --ledger FILE --from DATE --to DATE [--repo DIR [--branch NAME]]
                                           [--max-gap-hours N] [--head-sha256 HEX] [--json]
+    python wingbox_evidence_cli.py controls (--record FILE | --package FILE) [--mapping FILE] [--date DAY] [--json]
 
 `pack` gathers what a run left in DIR (wingbox-evidence.json and the report and plan it names), the test
 reports the record names as they are on disk, the job log when one is given, the policy files as the commit
@@ -16,16 +18,19 @@ with `manifest.json`. `verify` checks an archive against itself, and with --repo
 `review` adds the decision of a person as a new member; no earlier byte changes. `append` adds the line of
 a run at the end of a ledger; no earlier byte changes. `period` reads a ledger and counts what it recorded
 between two dates, with the gaps: with --repo the commits of a branch that no line names, with
---max-gap-hours the stretches without a run.
+--max-gap-hours the stretches without a run. `controls` evaluates a control mapping (wingbox_controls) against
+the record of a run, or against the record in a package, and prints each control with its state, its reasons
+and the evidence it names, then the controls without evidence and the evidence no control names.
 
 Exit status: 0 the command did its work and the result is good (a complete package, a package that
-verifies, a review recorded, a line recorded, a period without a gap); 1 the command did its work and found
-a defect (an incomplete package, a member that does not verify, a package or a ledger that does not verify,
-a gap in the period); 2 wrong usage (an option, a file that is not there, a file that would be written
+verifies, a review recorded, a line recorded, a period without a gap, a mapping every evaluated control of
+which is supported); 1 the command did its work and found a defect (an incomplete package, a member that does
+not verify, a package or a ledger that does not verify, a gap in the period, a mapping that is refused or a
+control that is not-supported or incomplete); 2 wrong usage (an option, a file that is not there, a file that would be written
 over). The last line of the output says which of the first two it is.
 
 This file is the I/O: files, git, the clock for a review without --time. The rules are in
-wingbox_package and wingbox_ledger, pure. Nothing of a package or of a repository is run: git is asked for
+wingbox_package, wingbox_ledger and wingbox_controls, pure. Nothing of a package or of a repository is run: git is asked for
 file contents (`git cat-file`) and for the commits of a branch (`git rev-list`), and an archive is read in
 memory, never unpacked. Standard library only, no network.
 """
@@ -43,6 +48,7 @@ from typing import Optional, Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))   # the modules next to this file, however it is loaded
 
+import wingbox_controls as controls  # noqa: E402
 import wingbox_ledger as ledger  # noqa: E402
 import wingbox_package as package  # noqa: E402
 
@@ -52,6 +58,7 @@ PACKAGE_FILE = "wingbox-package.zip"
 LEDGER_SCHEMA_FILE = "wingbox-ledger-1.schema.json"
 _TIME = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\Z")
 _DIGEST = re.compile(r"^[0-9a-fA-F]{64}\Z")
+_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}\Z")
 
 
 class Usage(Exception):
@@ -304,6 +311,57 @@ def period_run(path: str, start: str, end: str, repo: Optional[str] = None, bran
     return ledger.period(book, first, last, commits, branch, None if max_gap_hours is None else max_gap_hours * 3600, expected_head)
 
 
+def controls_run(record_file: str = "", package_file: str = "", mapping_file: str = "", date: str = "",
+                 limit: int = package.MAX_BYTES) -> tuple[int, dict[str, object], list[str]]:
+    """Evaluate a control mapping against the record of a run, by hand: (0 when the mapping was read and no
+    control is not-supported or incomplete, else 1; the evaluation as one value; lines to print before it).
+
+    The record is the file given, or the record of the package given, which must verify. The mapping is the
+    file given; for a package without one, the member that holds the mapping as the commit checked has it. It
+    is evaluated as a mapping given by hand: whether the base commit of the run held it is a question for
+    the record of that run, which a line answers by comparing the SHA-256 the record names. date: the day
+    validity is judged at; "" for the day of the record."""
+    own = schemas()
+    before: list[str] = []
+    members: dict[str, bytes] = {}
+    if package_file:
+        archive = _given_file(package_file, limit, "the package")
+        checked = package.verify(archive, own, limit=limit)
+        if not checked.intact:
+            return 1, {}, [f"package: {package_file}", *_problems(checked.problems), "controls: not evaluated (the package does not verify)"]
+        members = dict(package.read(archive)[0])
+        record_bytes = members.get(package.RECORD)
+        before.append(f"package: {package_file}")
+    else:
+        record_bytes = _given_file(record_file, limit, "the record")
+        before.append(f"record: {record_file}")
+    record = package.read_record(record_bytes, own.record)
+    if record is None:
+        return 1, {}, [*before, f"controls: not evaluated (not a {package.RECORD_SCHEMA} record)"]
+    ran = record.get("controls", {}).get("mapping", {})
+    if mapping_file:
+        data, name = _given_file(mapping_file, limit, "the mapping"), mapping_file.replace("\\", "/")
+    else:
+        name = ran.get("path") or controls.CONTROLS_PATH
+        found = members.get(package.policy_path(name))
+        if found is None:
+            raise Usage(f"no control mapping: name one with --mapping (the {'package holds' if package_file else 'record names'} none"
+                        f"{' at ' + name if package_file else ''})")
+        data = found
+    day = date or record["generated"][:10]
+    if not _DAY.match(day):
+        raise Usage("--date must be a day as 2026-01-31")
+    try:
+        said = controls.evaluate(controls.read(data, name, "given"), record, day)
+    except ValueError:
+        raise Usage("--date must be a day as 2026-01-31") from None
+    digest = said["mapping"]["sha256"]
+    before.append("run-mapping: the record evaluated no mapping" if not ran.get("sha256") else
+                  f"run-mapping: the same bytes as the run evaluated ({ran.get('source')})" if ran.get("sha256") == digest else
+                  f"run-mapping: other bytes than the run evaluated ({ran.get('source')}, SHA-256 {ran.get('sha256')})")
+    return (0 if controls.ok(said) else 1), said, before
+
+
 def now() -> str:
     """The UTC time, as a review writes it."""
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -317,9 +375,10 @@ def _pair(text: str) -> tuple[str, str]:
 
 
 def parser() -> argparse.ArgumentParser:
-    top = argparse.ArgumentParser(prog=PROGRAM, description="Build, check and review the evidence package of a run, and keep the runs of a period.",
+    top = argparse.ArgumentParser(prog=PROGRAM, description="Build, check and review the evidence package of a run, keep the runs of a period, "
+                                                            "and evaluate a control mapping against a run.",
                                   epilog="Exit status: 0 done and good; 1 done, and a defect was found; 2 wrong usage.")
-    commands = top.add_subparsers(dest="command", required=True, metavar="pack|verify|review|append|period")
+    commands = top.add_subparsers(dest="command", required=True, metavar="pack|verify|review|append|period|controls")
     limit = argparse.ArgumentParser(add_help=False)
     limit.add_argument("--max-bytes", type=int, default=package.MAX_BYTES, metavar="N",
                        help=f"the largest archive and the largest member read (default {package.MAX_BYTES})")
@@ -359,6 +418,13 @@ def parser() -> argparse.ArgumentParser:
     period.add_argument("--max-gap-hours", type=int, default=None, metavar="N", help="list every stretch without a run longer than this")
     period.add_argument("--head-sha256", default="", metavar="HEX", help="the SHA-256 the last line must have, when it was kept elsewhere")
     period.add_argument("--json", action="store_true", help="print the report as one JSON value")
+    mapped = commands.add_parser("controls", parents=[limit], help="evaluate a control mapping against the record of a run")
+    subject = mapped.add_mutually_exclusive_group(required=True)
+    subject.add_argument("--record", default="", metavar="FILE", help="wingbox-evidence.json of a run")
+    subject.add_argument("--package", default="", metavar="FILE", help="the package of a run: its record is evaluated")
+    mapped.add_argument("--mapping", default="", metavar="FILE", help="the control mapping (default with --package: the one the package holds)")
+    mapped.add_argument("--date", default="", metavar="DAY", help="the day validity is judged at, as 2026-01-31 (default: the day of the record)")
+    mapped.add_argument("--json", action="store_true", help="print the evaluation as one JSON value")
     return top
 
 
@@ -380,6 +446,11 @@ def run(args: argparse.Namespace) -> tuple[int, list[str]]:
     if args.command == "append":
         status, lines, _head = append_run(args.ledger, args.record, args.package, args.max_bytes)
         return status, lines
+    if args.command == "controls":
+        status, said, before = controls_run(args.record, args.package, args.mapping, args.date, args.max_bytes)
+        if not said:
+            return status, before
+        return status, [json.dumps(said, indent=2, ensure_ascii=True)] if args.json else [*before, *controls.lines(said)]
     if args.head_sha256 and not _DIGEST.match(args.head_sha256):
         raise Usage("--head-sha256 must be 64 hexadecimal digits")
     report = period_run(args.ledger, args.start, args.end, args.repo, args.branch, args.max_gap_hours, args.head_sha256, args.max_bytes)

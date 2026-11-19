@@ -1,0 +1,13 @@
+# The tests a change of these paths must pass, in the shop repository of the Lantern team.
+billing:
+  paths:
+    - src/billing/
+  tests:
+    - tests/test_invoice.py
+    - tests/test_tax.py
+
+catalog:
+  paths:
+    - src/catalog/
+  tests:
+    - tests/test_catalog.py

@@ -38,6 +38,29 @@
   counts; it does not conclude that a control operated effectively.
 - New schemas `schema/wingbox-ledger-1.schema.json` (a ledger line) and
   `schema/wingbox-period-1.schema.json` (the report of `period --json`).
+- A control mapping: `.wingbox/controls.yaml` (input `controls` for another
+  path; in GitLab `WINGBOX_CONTROLS`) lists the team's own controls, each with
+  the references it answers, its approval and dates of validity, its scope,
+  the narrow claim and its limits, the method, and the evidence it requires:
+  verdicts of the record and groups of required tests. Each run evaluates it,
+  and the record gains `controls`: the mapping with its SHA-256 and, per
+  control, one state of `supported`, `not-supported`, `incomplete` and
+  `not-evaluated` with reason codes and the record fields that were read. A
+  state is about the evidence of one run; it never says that a control
+  conforms. A draft, an expired approval, a scope the run did not cover, a
+  required test without a passing record and an empty list of evidence are
+  never `supported`; a method of a person is `not-evaluated`.
+- The mapping of the base commit counts, and a change of the mapping is a
+  policy change (kind `controls`). A mapping that arrives with the change it
+  would judge supports no claim until it is merged.
+- `python wingbox_evidence_cli.py controls` evaluates a mapping against a
+  record or a package by hand and lists the controls without evidence and the
+  evidence no control names. The manifest of a package repeats the mapping and
+  the state of each control in `control`, which replaces the empty placeholder
+  of that object.
+- New schema `schema/wingbox-controls-1.schema.json` (the mapping, for an
+  editor); `controls` is added to `schema/wingbox-evidence-2.schema.json`.
+  Sixteen worked examples: `docs/controls/examples.md`.
 
 ## 1.5.0 - 2026-11-19
 

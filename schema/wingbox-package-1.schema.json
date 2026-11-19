@@ -50,16 +50,31 @@
     "control": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["mapping", "id", "edition", "scope", "owner", "applies", "risk"],
-      "description": "The control the evidence is for. `mapping` is none and the other values are empty when no control mapping was given.",
+      "required": ["mapping", "path", "sha256", "commit", "name", "version", "owner", "evaluated", "controls"],
+      "description": "The control mapping the record evaluated, and what the record supports for each control: the `controls` object of the record in short. `mapping` is none and the other values are empty when the record evaluated no mapping. A state is a statement about this evidence, never that a control conforms.",
       "properties": {
-        "mapping": {"type": "string", "enum": ["none"]},
-        "id": {"type": "string"},
-        "edition": {"type": "string"},
-        "scope": {"type": "string"},
+        "mapping": {"type": "string", "enum": ["none", "base", "head", "given", "refused"], "description": "Where the mapping was read from: the base commit, the checked files, or a file named by hand; refused: it had errors and gives no control."},
+        "path": {"type": "string"},
+        "sha256": {"type": "string", "pattern": "^([0-9a-f]{64})?$", "description": "Of the bytes of the mapping that was evaluated."},
+        "commit": {"type": "string", "description": "The base commit the mapping was read from; empty otherwise."},
+        "name": {"type": "string"},
+        "version": {"type": "string"},
         "owner": {"type": "string"},
-        "applies": {"type": "string"},
-        "risk": {"type": "string"}
+        "evaluated": {"type": "string", "pattern": "^([0-9]{4}-[0-9]{2}-[0-9]{2})?$", "description": "The day validity was judged at: the day of the record."},
+        "controls": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "title", "state", "reasons"],
+            "properties": {
+              "id": {"type": "string"},
+              "title": {"type": "string"},
+              "state": {"type": "string", "enum": ["supported", "not-supported", "incomplete", "not-evaluated"]},
+              "reasons": {"type": "array", "items": {"type": "string"}, "description": "The reason codes, as the record lists them."}
+            }
+          }
+        }
       }
     },
     "stated": {
@@ -87,7 +102,7 @@
             "required": ["path", "kind", "state", "member"],
             "properties": {
               "path": {"type": "string"},
-              "kind": {"type": "string", "enum": ["baseline", "rules", "declared-rules", "workflow", "required-tests", "named"]},
+              "kind": {"type": "string", "enum": ["baseline", "rules", "declared-rules", "workflow", "required-tests", "controls", "named"]},
               "state": {"type": "string", "enum": ["present", "not-in-commit", "not-read"]},
               "member": {"type": "string", "description": "The id of the member that holds the file; empty when it is not present."}
             }

@@ -139,7 +139,7 @@
             "required": ["path", "kind", "change"],
             "properties": {
               "path": {"type": "string"},
-              "kind": {"type": "string", "enum": ["baseline", "rules", "declared-rules", "workflow", "required-tests"]},
+              "kind": {"type": "string", "enum": ["baseline", "rules", "declared-rules", "workflow", "required-tests", "controls"]},
               "change": {"type": "string", "enum": ["added", "changed", "removed"]}
             }
           }
@@ -422,6 +422,118 @@
         "additionalProperties": false,
         "required": ["name", "sha256"],
         "properties": {"name": {"type": "string"}, "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+      }
+    },
+    "controls": {
+      "type": "object",
+      "description": "The control mapping of the team (.wingbox/controls.yaml, format wingbox-controls/1) evaluated against this record: what the record supports for the narrow claim of each control. A state is never a statement that a control conforms or operates. Not in a record written before the control mapping.",
+      "additionalProperties": false,
+      "required": ["mapping", "evaluated", "controls", "without-evidence", "unmapped-evidence", "statement"],
+      "properties": {
+        "mapping": {
+          "type": "object",
+          "description": "The mapping that was read. It is read from the base commit when the base holds it, so a change cannot weaken the mapping it is judged by.",
+          "additionalProperties": false,
+          "required": ["path", "source", "commit", "sha256", "format", "name", "version", "owner", "errors", "changed"],
+          "properties": {
+            "path": {"type": "string"},
+            "source": {"type": "string", "enum": ["base", "head", "given", "none"], "description": "base: the base commit holds it. head: only the checked files do; it then supports no claim. given: named by hand. none: not found."},
+            "commit": {"type": "string", "description": "The base commit it was read from; empty otherwise."},
+            "sha256": {"type": "string", "pattern": "^([0-9a-f]{64})?$", "description": "Of the bytes of the file; empty when not found."},
+            "format": {"type": "string", "enum": ["", "wingbox-controls/1"], "description": "Empty when no mapping was read or it was refused."},
+            "name": {"type": "string"},
+            "version": {"type": "string"},
+            "owner": {"type": "string"},
+            "errors": {"type": "array", "items": {"type": "string"}, "description": "Why the mapping was refused as a whole, each with its line; empty when it was read."},
+            "changed": {"type": "boolean", "description": "Whether the change under evaluation edits the mapping file (see policy.changed)."}
+          }
+        },
+        "evaluated": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "description": "The day the validity of each approval was judged at: the day of `generated`."},
+        "controls": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "title", "status", "method", "approver", "approval", "valid-from", "valid-until", "risk", "claim", "limits", "references", "scope", "requires", "state", "reasons", "evidence"],
+            "properties": {
+              "id": {"type": "string", "description": "The team's own id of the control."},
+              "title": {"type": "string"},
+              "status": {"type": "string", "enum": ["approved", "draft"]},
+              "method": {"type": "string", "enum": ["static-analysis", "executed-test", "configuration-check", "document-review", "human-judgement", "operational-record"]},
+              "approver": {"type": "string"},
+              "approval": {"type": "string", "description": "The reference of the approval."},
+              "valid-from": {"type": "string", "pattern": "^([0-9]{4}-[0-9]{2}-[0-9]{2})?$"},
+              "valid-until": {"type": "string", "pattern": "^([0-9]{4}-[0-9]{2}-[0-9]{2})?$"},
+              "risk": {"type": "string"},
+              "claim": {"type": "string", "description": "The narrow claim the evidence supports, in the team's words."},
+              "limits": {"type": "string", "description": "What the evidence does not show, in the team's words."},
+              "references": {
+                "type": "array",
+                "description": "What the control answers in a framework, as the team wrote it: the tool does not hold or read the framework.",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["framework", "edition", "reference"],
+                  "properties": {"framework": {"type": "string"}, "edition": {"type": "string"}, "reference": {"type": "string"}}
+                }
+              },
+              "scope": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["paths", "parts"],
+                "properties": {"paths": {"type": "array", "items": {"type": "string"}}, "parts": {"type": "array", "items": {"type": "string"}}}
+              },
+              "requires": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["verdicts", "tests"],
+                "properties": {
+                  "verdicts": {"type": "array", "items": {"type": "string", "enum": ["boundaries-introduced", "boundaries-existing", "baseline", "tests", "coverage", "policy-unchanged"]}},
+                  "tests": {"type": "array", "items": {"type": "string"}, "description": "Groups of the manifest of required tests."}
+                }
+              },
+              "state": {"type": "string", "enum": ["supported", "not-supported", "incomplete", "not-evaluated"], "description": "supported: the mapping is in force, the run covered the scope and every required piece of evidence holds. not-supported: the mapping supports no claim, or a required piece fails. incomplete: a required piece is not in the record, unknown or not applicable, or the scope was not covered. not-evaluated: the method needs the record of a person or of operation."},
+              "reasons": {
+                "type": "array",
+                "description": "Why the state is not supported; empty when it is.",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["code", "detail"],
+                  "properties": {"code": {"type": "string", "enum": ["mapping-not-in-base", "mapping-draft", "approval-incomplete", "approval-not-yet-valid", "approval-expired", "person-record-needed", "operational-record-needed", "verdict-failed", "required-test-failed", "test-step-failed", "required-evidence-empty", "method-evidence-missing", "scope-not-covered", "verdict-unknown", "verdict-not-applicable", "required-tests-absent", "required-test-not-passed", "required-tests-manifest-unreadable", "test-step-incomplete"]}, "detail": {"type": "string"}}
+                }
+              },
+              "evidence": {
+                "type": "array",
+                "description": "Each piece of evidence the control requires, with the field of this record it was read from and what the field holds.",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["kind", "name", "field", "value", "result"],
+                  "properties": {
+                    "kind": {"type": "string", "enum": ["verdict", "required-tests"]},
+                    "name": {"type": "string"},
+                    "field": {"type": "string"},
+                    "value": {"type": "string"},
+                    "result": {"type": "string", "enum": ["holds", "fails", "missing"]}
+                  }
+                }
+              }
+            }
+          }
+        },
+        "without-evidence": {"type": "array", "items": {"type": "string"}, "description": "The ids of the controls that are incomplete or not-evaluated: the record gives no evidence that counts for them."},
+        "unmapped-evidence": {
+          "type": "array",
+          "description": "The verdicts of the record and the groups of required tests it holds that no control of the mapping names.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "name"],
+            "properties": {"kind": {"type": "string", "enum": ["verdict", "required-tests"]}, "name": {"type": "string"}}
+          }
+        },
+        "statement": {"type": "string"}
       }
     }
   }

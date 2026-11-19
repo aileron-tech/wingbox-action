@@ -1,0 +1,269 @@
+{
+  "schema": "wingbox-evidence/2",
+  "generated": "2026-01-02T03:04:05Z",
+  "tool": {
+    "name": "wingbox-action",
+    "ref": "v1",
+    "wingbox": "0.15.0"
+  },
+  "run": {
+    "provider": "github",
+    "repository": "lantern/shop",
+    "change": "41",
+    "id": "9001",
+    "url": "https://github.com/lantern/shop/actions/runs/9001",
+    "attempt": "1",
+    "job": "check"
+  },
+  "subject": {
+    "base": "1111111111111111111111111111111111111111",
+    "head": "2222222222222222222222222222222222222222",
+    "checked": "2222222222222222222222222222222222222222",
+    "tree": "head",
+    "differs": []
+  },
+  "result": {
+    "boundaries": "PASS",
+    "execution": "ok",
+    "reasons": []
+  },
+  "policy": {
+    "mode": "report",
+    "changed": [],
+    "judged-with": "",
+    "entries": [],
+    "self-accepted": []
+  },
+  "coverage": {
+    "complete": true,
+    "reasons": [],
+    "repository": "lantern/shop",
+    "commit": "2222222222222222222222222222222222222222",
+    "tree": "head",
+    "languages": [
+      {
+        "language": "js",
+        "analysed": 3,
+        "skipped": 0
+      },
+      {
+        "language": "py",
+        "analysed": 9,
+        "skipped": 0
+      }
+    ],
+    "parts": [
+      {
+        "part": ".",
+        "style": "layered",
+        "modules": 9,
+        "checked": true,
+        "reason": ""
+      },
+      {
+        "part": "web",
+        "style": "layered",
+        "modules": 3,
+        "checked": true,
+        "reason": ""
+      }
+    ],
+    "excluded": {
+      "paths": {
+        "patterns": [],
+        "changed-files": []
+      },
+      "gitignore": {
+        "files": 0,
+        "folders": []
+      },
+      "folders": []
+    },
+    "graph": {
+      "state": "FRESH",
+      "reason": "",
+      "tree": "4c3c798f0d632d7dc3de0ab6455690ba",
+      "commit": "2222222222222222222222222222222222222222",
+      "wingbox": "0.15.0",
+      "stale-files": 0
+    },
+    "not-seen": [
+      {
+        "what": "reflection",
+        "counted": false,
+        "sites": 0
+      },
+      {
+        "what": "imports built from strings",
+        "counted": false,
+        "sites": 0
+      },
+      {
+        "what": "calls through an untyped receiver",
+        "counted": true,
+        "sites": 0
+      }
+    ]
+  },
+  "boundaries": {
+    "introduced": {
+      "verdict": "PASS",
+      "findings": 0,
+      "violations": 0,
+      "reasons": []
+    },
+    "existing": {
+      "verdict": "NONE",
+      "violations": 0,
+      "first": ""
+    }
+  },
+  "baseline": {
+    "verdict": "NONE",
+    "accepted": 0,
+    "expired": 0,
+    "without-end-date": 0,
+    "entries": [],
+    "past": []
+  },
+  "eligible": true,
+  "eligible-reasons": [],
+  "counts": {
+    "changed-files": 2,
+    "untouched-dependents": 1,
+    "introduced-findings": 0,
+    "not-checked-parts": 0,
+    "tests-to-run": 2
+  },
+  "files": [
+    {
+      "path": "src/billing/invoice.py",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "path": "src/catalog/items.py",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ],
+  "tests": {
+    "evidence": "complete",
+    "step-outcome": "success",
+    "to-run": [
+      {
+        "test": "tests/test_catalog.py",
+        "status": "passed",
+        "cases": 1,
+        "records": [
+          {
+            "where": "tests.test_catalog",
+            "name": "test_listing",
+            "status": "passed"
+          }
+        ]
+      },
+      {
+        "test": "tests/test_invoice.py",
+        "status": "passed",
+        "cases": 2,
+        "records": [
+          {
+            "where": "tests.test_invoice",
+            "name": "test_total",
+            "status": "passed"
+          },
+          {
+            "where": "tests.test_invoice",
+            "name": "test_rounding",
+            "status": "passed"
+          }
+        ]
+      }
+    ],
+    "required": [
+      {
+        "group": "billing",
+        "test": "tests/test_invoice.py",
+        "status": "passed",
+        "cases": 2,
+        "records": [
+          {
+            "where": "tests.test_invoice",
+            "name": "test_total",
+            "status": "passed"
+          },
+          {
+            "where": "tests.test_invoice",
+            "name": "test_rounding",
+            "status": "passed"
+          }
+        ]
+      },
+      {
+        "group": "billing",
+        "test": "tests/test_tax.py",
+        "status": "passed",
+        "cases": 1,
+        "records": [
+          {
+            "where": "tests.test_tax",
+            "name": "test_rate",
+            "status": "passed"
+          }
+        ]
+      },
+      {
+        "group": "catalog",
+        "test": "tests/test_catalog.py",
+        "status": "passed",
+        "cases": 1,
+        "records": [
+          {
+            "where": "tests.test_catalog",
+            "name": "test_listing",
+            "status": "passed"
+          }
+        ]
+      }
+    ],
+    "manifest": {
+      "path": ".wingbox/required-tests.yaml",
+      "source": "base",
+      "commit": "1111111111111111111111111111111111111111",
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "errors": []
+    },
+    "provenance": {
+      "commit": "2222222222222222222222222222222222222222",
+      "started": "2026-01-02T03:00:00Z",
+      "run": "9001",
+      "attempt": "1",
+      "command": "python -m pytest --junitxml=test-results/junit.xml",
+      "sidecar-required": false
+    },
+    "reports": [
+      {
+        "path": "test-results/junit.xml",
+        "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "cases": 4,
+        "status": "accepted",
+        "reasons": [],
+        "timestamp": "2026-01-02T03:01:00",
+        "modified": "2026-01-02T03:01:30Z",
+        "tracked": "untracked",
+        "commits": [],
+        "sidecar": "none",
+        "sidecar-command": ""
+      }
+    ]
+  },
+  "documents": [
+    {
+      "name": "wingbox-plan.sexp",
+      "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    },
+    {
+      "name": "wingbox-report.md",
+      "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    }
+  ]
+}

@@ -135,6 +135,22 @@ jobs:
           grep -q "without a record: $BASE" "$RUNNER_TEMP/period.txt"
           python -P wingbox_evidence_cli.py append --ledger "$RUNNER_TEMP/ledger/ledger.jsonl" --package "$PACKAGE" > "$RUNNER_TEMP/append.txt"
           grep -q "append: already recorded" "$RUNNER_TEMP/append.txt"
+      # The control mapping of the test fixtures, evaluated by hand against the record of the package. The
+      # fixture repository has no mapping, so the run evaluated none; the mapping named here holds a draft
+      # control and one that needs a person, so the command ends with status 1 and says so for each.
+      - name: Evaluate a control mapping against the package
+        shell: bash
+        env:
+          PACKAGE: ${{ steps.wingbox.outputs.package }}
+        run: |
+          status=0
+          python -P wingbox_evidence_cli.py controls --package "$PACKAGE" --mapping tests/fixtures/controls/controls.yaml > "$RUNNER_TEMP/controls.txt" || status=$?
+          cat "$RUNNER_TEMP/controls.txt"
+          test "$status" = 1
+          grep -q "^run-mapping: the record evaluated no mapping" "$RUNNER_TEMP/controls.txt"
+          grep -q "^control: SDLC-08 not-supported" "$RUNNER_TEMP/controls.txt"
+          grep -q "^control: SDLC-10 not-evaluated" "$RUNNER_TEMP/controls.txt"
+          grep -q "^controls: " "$RUNNER_TEMP/controls.txt"
       - name: Check that the fixture checkout is clean
         shell: bash
         working-directory: ${{ runner.temp }}/fixture

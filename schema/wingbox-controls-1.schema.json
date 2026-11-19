@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/aileron-tech/wingbox-action/blob/main/schema/wingbox-controls-1.schema.json",
+  "title": "Wingbox control mapping, format 1",
+  "description": "The value a control mapping (.wingbox/controls.yaml) holds: for each control of a team the references it answers, its approval, scope, claim, limits, method and the evidence of a run it requires. The file itself is YAML in a small subset that wingbox_controls.py reads line by line (two spaces per level, a value on the line of its key, one `- item` per line, comments on their own lines); this schema describes the same keys and words for an editor. The ids, titles and references are the team's own: the tool does not hold or read a framework.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "mapping", "controls"],
+  "properties": {
+    "format": {"type": "string", "enum": ["wingbox-controls/1"]},
+    "mapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "owner"],
+      "properties": {
+        "name": {"type": "string", "description": "The name of the mapping, in the team's words."},
+        "version": {"type": "string", "description": "The version of the mapping, in quotes."},
+        "owner": {"type": "string", "description": "The role or person that owns the mapping."}
+      }
+    },
+    "controls": {
+      "type": "object",
+      "description": "The controls, each under the team's own id (letters, digits, `.`, `_`, `-`).",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "status", "method", "claim", "limits", "references"],
+        "properties": {
+          "title": {"type": "string"},
+          "status": {"type": "string", "enum": ["approved", "draft"], "description": "A draft supports no claim."},
+          "approver": {"type": "string", "description": "Who approved the mapping of this control. An approved control without it supports no claim."},
+          "approval": {"type": "string", "description": "The reference of the approval."},
+          "valid-from": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "description": "The first day the approval is in force, in quotes."},
+          "valid-until": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "description": "The last day the approval is in force, in quotes."},
+          "risk": {"type": "string", "description": "The reference of the related risk."},
+          "method": {"type": "string", "enum": ["static-analysis", "executed-test", "configuration-check", "document-review", "human-judgement", "operational-record"], "description": "The first three are evaluated from a record; the others need a record the tool does not make."},
+          "claim": {"type": "string", "description": "The narrow claim the evidence supports."},
+          "limits": {"type": "string", "description": "What the evidence does not show."},
+          "references": {
+            "type": "array",
+            "description": "What the control answers in a framework: free text of the team.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["framework", "edition", "reference"],
+              "properties": {"framework": {"type": "string"}, "edition": {"type": "string"}, "reference": {"type": "string"}}
+            }
+          },
+          "scope-paths": {"type": "array", "items": {"type": "string"}, "description": "Globs (`*` crosses folders), folders ending in `/`, or modules. A control has scope-paths, scope-parts or both."},
+          "scope-parts": {"type": "array", "items": {"type": "string"}, "description": "Parts of the repository as Wingbox names them (coverage.parts of the record)."},
+          "requires-verdicts": {"type": "array", "items": {"type": "string", "enum": ["boundaries-introduced", "boundaries-existing", "baseline", "tests", "coverage", "policy-unchanged"]}, "description": "The verdicts of the record that must hold."},
+          "requires-tests": {"type": "array", "items": {"type": "string"}, "description": "The groups of the manifest of required tests that must have passed."}
+        }
+      }
+    }
+  }
+}

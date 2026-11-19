@@ -658,6 +658,7 @@ _POLICY_KINDS = {
     "declared-rules": "rules the project declares",
     "workflow": "the workflow that runs this check",
     "required-tests": "the tests a change must pass",
+    "controls": "the mapping from controls to evidence",
 }
 _TERM_WORDS = {"owner": "owner", "reason": "reason", "expires": "end date"}
 

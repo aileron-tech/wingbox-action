@@ -320,6 +320,7 @@ policy files:
 | a rule file the project declares (a dependency-cruiser layer list and the like), as the graph of the base or of the head names it | rules the project declares |
 | the workflow that runs the check (the file GitHub or GitLab names for the run, and any changed workflow file that names wingbox) | the workflow |
 | `.wingbox/required-tests.yaml`, or the manifest whose path the job gives | the tests a change must pass |
+| `.wingbox/controls.yaml`, or the mapping whose path the job gives | the mapping from controls to evidence |
 
 A pull request that edits one of them would be judged by its own edit: a
 break of a rule together with a new baseline entry for it used to pass. So:
@@ -588,7 +589,9 @@ that was checked, the result with its reasons, the verdicts kept apart
 edits (`policy`), what the run analysed and left out (`coverage`), the counts, the changed files
 with their SHA-256, the tests to run and the required tests with their
 evidence and every recorded case, the manifest of required tests as it was
-read, the test reports with where each comes from, and the SHA-256 of the
+read, the test reports with where each comes from, the controls of the team's
+mapping with what the record supports for each (`controls`, see
+[Control mapping](#control-mapping)), and the SHA-256 of the
 report and of the plan written beside it. Its shape is
 [`schema/wingbox-evidence-2.schema.json`](schema/wingbox-evidence-2.schema.json)
 (`"schema": "wingbox-evidence/2"`); a record of 1.4 says `wingbox-evidence/1`
@@ -710,8 +713,9 @@ repository is written `%XX`.
 **The manifest** ([`schema/wingbox-package-1.schema.json`](schema/wingbox-package-1.schema.json),
 `"schema": "wingbox-package/1"`) holds: the bundle id (the SHA-256 of the lines `<sha256>  <path>`
 of the members by path, what `sha256sum` prints); `state`; the time, the tool, the subject and the
-run with its address, taken from the record; `retention` and `stated`; `control`, marked
-`"mapping": "none"` with empty values until a control mapping is given; `policy` (the commit, and
+run with its address, taken from the record; `retention` and `stated`; `control` (the
+[control mapping](#control-mapping) the record evaluated, with the state of each control; `"mapping":
+"none"` with empty values when the record evaluated none); `policy` (the commit, and
 each policy file as `present`, `not-in-commit` or `not-read`); `checks`; `members` (each with id,
 path, role, media type, length, SHA-256, whether it is required, its source and, for a policy file,
 its commit); `required` (each as `present`, `absent`, `differs` or `unreadable`); `optional` (the
@@ -888,6 +892,190 @@ A commit without a record, a stretch over the limit and a broken ledger are defe
 Failed and unknown runs are counted and listed, not judged. `period` reads no clock either: the
 period is taken as given, so one that ends in the future ends with a stretch.
 
+## Control mapping
+
+A record says what a run checked. It does not say which control of a team's management system the run is
+evidence for. A team keeps that mapping by hand, and nothing checks that the evidence a control names was
+in fact produced. The control mapping is that list as a file of the repository, and each run evaluates it:
+
+```yaml
+# .wingbox/controls.yaml
+format: wingbox-controls/1
+mapping:
+  name: "Example team control map"
+  version: "2026.1"
+  owner: "Engineering lead"
+controls:
+  SDLC-03:
+    title: "Changes are checked against the architecture rules"
+    status: approved
+    approver: "Head of engineering"
+    approval: "CAB-2026-014"
+    valid-from: "2026-01-01"
+    valid-until: "2026-12-31"
+    risk: "RISK-07"
+    method: static-analysis
+    claim: "The change introduces no violation of the declared architecture rules, and every part was looked at."
+    limits: "Does not show that the rules are the right ones, nor that a person reviewed the change."
+    references:
+      - framework: "Example security policy"
+        edition: "v3"
+        reference: "SP-7.2 Secure design"
+    scope-paths:
+      - "src/**"
+    requires-verdicts:
+      - boundaries-introduced
+      - coverage
+  SDLC-05:
+    title: "Billing changes pass the billing tests"
+    status: draft
+    method: executed-test
+    claim: "Every test the billing group requires for this change has a passing record."
+    limits: "Does not show that the billing tests are sufficient."
+    references:
+      - framework: "Example security policy"
+        edition: "v3"
+        reference: "SP-8.1 Testing before release"
+    scope-parts:
+      - backend
+    requires-tests:
+      - billing
+```
+
+The ids, titles and references are the team's own words. The tool ships no framework and reads none: a
+reference is free text (`framework`, `edition`, `reference`) that the record repeats.
+
+**The file** is YAML in a small subset, read line by line like the manifest of required tests, so every
+YAML reader gives the same: `format: wingbox-controls/1`, a `mapping` with `name`, `version` and `owner`,
+and `controls`. Two spaces per level, no tab; a value on the line of its key, plain or in quotes (a date,
+a version and a number always in quotes); the items of a list on the lines below, one `- item` each;
+comments on their own lines. Anything else refuses the whole file with the line, and a refused mapping
+gives no control: which evidence a control requires is then not known, which is never read as "nothing
+is mapped". [`schema/wingbox-controls-1.schema.json`](schema/wingbox-controls-1.schema.json) describes
+the same keys for an editor.
+
+| Key of a control | Meaning |
+|---|---|
+| `title` | the control in the team's words |
+| `status` | `approved` or `draft`; a draft supports no claim |
+| `approver`, `approval`, `valid-from`, `valid-until` | who approved the mapping of this control, the reference of the approval, the first and the last day it is in force; an approved control without one of them supports no claim |
+| `risk` | the reference of the related risk |
+| `method` | how the evidence is obtained, one of six (below) |
+| `claim`, `limits` | the narrow claim the evidence supports, and what it does not show |
+| `references` | what the control answers in a framework, one or more |
+| `scope-paths`, `scope-parts` | the scope: paths (globs where `*` crosses folders, folders ending in `/`, modules), parts of the repository as Wingbox names them, or both |
+| `requires-verdicts` | the verdicts of the record that must hold |
+| `requires-tests` | the groups of the [manifest of required tests](#required-tests) that must have passed |
+
+**The methods.** `static-analysis`, `executed-test` and `configuration-check` are evaluated from the
+record. `document-review` and `human-judgement` need the record of a person, and `operational-record`
+needs a record of operation over a period: the tool does not evaluate them and never writes such a record.
+
+**The verdicts** a control may require, each read from one field of the record:
+
+| Verdict | Field | Holds for | Fails for |
+|---|---|---|---|
+| `boundaries-introduced` | `boundaries.introduced.verdict` | `PASS` | `FAIL` |
+| `boundaries-existing` | `boundaries.existing.verdict` | `NONE` | `PRESENT` |
+| `baseline` | `baseline.verdict` | `NONE`, `ACCEPTED` | `EXPIRED` |
+| `tests` | `tests.evidence` | `complete` | `failed` |
+| `coverage` | `coverage.complete` | true | |
+| `policy-unchanged` | `policy.changed` | no file | a changed file |
+
+Any other word (`UNKNOWN`, `incomplete`, `none`, `none-found`, a field the record does not have) is
+unknown. `NOT_APPLICABLE` is not support either: "not applicable" is a decision with an approval, never
+something a run infers. A group of `requires-tests` holds only when the record has a test of that group
+(`tests.required`) and every one of them is `passed`.
+
+**The states.** Each control gets one of four, with reasons:
+
+| State | Meaning |
+|---|---|
+| `supported` | the mapping is approved and in force, the run covered the scope, and every piece of the required evidence is in the record and holds |
+| `not-supported` | the mapping supports no claim, or a piece of the required evidence is in the record and fails |
+| `incomplete` | a piece of the required evidence is not in the record, is unknown or does not apply, or the run did not cover the scope |
+| `not-evaluated` | the method needs the record of a person or of operation |
+
+| Reason | State | When |
+|---|---|---|
+| `mapping-not-in-base` | not-supported | the base commit holds no mapping: this one arrives with the change it would judge |
+| `mapping-draft` | not-supported | `status: draft` |
+| `approval-incomplete` | not-supported | approved without approver, approval, valid-from or valid-until |
+| `approval-not-yet-valid`, `approval-expired` | not-supported | the day of the record is before the first or after the last day |
+| `person-record-needed` | not-evaluated | method `document-review` or `human-judgement` |
+| `operational-record-needed` | not-evaluated | method `operational-record` |
+| `verdict-failed` | not-supported | a required verdict fails |
+| `required-test-failed` | not-supported | a test of a required group failed |
+| `test-step-failed` | not-supported | the test step of the job ended with failure, whatever the reports hold |
+| `required-evidence-empty` | incomplete | the control names no verdict and no group: an empty set is not "nothing is required" |
+| `method-evidence-missing` | incomplete | no evidence of the kind of the method is required (a boundary verdict for static-analysis, the test verdict or a group for executed-test, `policy-unchanged` for configuration-check) |
+| `scope-not-covered` | incomplete | the run left out something in the scope that the required evidence rests on (below) |
+| `verdict-unknown` | incomplete | a required verdict is unknown |
+| `verdict-not-applicable` | incomplete | the run says the check did not apply to this change |
+| `required-tests-absent` | incomplete | the record holds no test of a required group |
+| `required-test-not-passed` | incomplete | a test of a required group was skipped, ran in part, has no record, or no report was given |
+| `required-tests-manifest-unreadable` | incomplete | the manifest of required tests could not be read |
+| `test-step-incomplete` | incomplete | the test step was cancelled or skipped |
+
+**The scope.** A verdict is a word about the whole run and is not narrowed to the scope. The scope
+decides whether what the run left out lies in it, and what counts depends on what the control requires:
+
+- for every control: a part the scope names must be a part the run names (`coverage.parts`), and the
+  files analysed must be the commit named;
+- for a control that requires a verdict resting on the graph (`boundaries-introduced`,
+  `boundaries-existing`, `baseline`, `tests`, `coverage`): a language left out, a graph that is stale or
+  unconfirmed, a tool error, and a changed file in the scope that the `paths` input left out;
+- for a control that requires a verdict of the boundary rules (`boundaries-introduced`,
+  `boundaries-existing`, `baseline`): a part that was not checked, when the scope names it or a scope
+  path may lie in it. Only two fixed beginnings that part ways (`src/**` and the part `web`) show that a
+  path cannot lie in a part; the root part holds every path.
+
+The recorded cases of a group of required tests rest on neither the graph nor the rules: the manifest
+names the tests by path.
+
+A state says what one record supports for the narrow claim of one control.
+It does not state that a control conforms or operates effectively, and nothing is concluded for a
+framework from a count of states. A file that exists, an edge of the graph, a test name or a command that passed is not evidence
+here: only the verdicts of the record and the recorded cases of the required tests are.
+
+**The base commit counts.** The mapping is read from the base commit when that commit holds it, as the
+manifest of required tests is: a change that drops a required test from the mapping is still judged by
+the mapping of the base. `.wingbox/controls.yaml` is a policy file (see
+[A change that edits what it is checked by](#a-change-that-edits-what-it-is-checked-by)): a change of it
+is listed, and `policy-change: fail` fails the job. A mapping that only the change itself brings supports
+no claim yet (`mapping-not-in-base`); it counts from the next change on.
+
+**In the record.** `wingbox-evidence.json` gains the object `controls`
+([`schema/wingbox-evidence-2.schema.json`](schema/wingbox-evidence-2.schema.json)): `mapping` (path,
+`source` base, head or none, the base commit, the SHA-256 of the file, name, version, owner, the errors of
+a refused file, and whether the change edits it), `evaluated` (the day validity was judged at: the day of
+the record, no clock is read), `controls` (each with what the file states of it, its `state`, its
+`reasons` and each piece of `evidence` with the field it was read from, what the field holds and
+`holds`, `fails` or `missing`), `without-evidence` (the controls that are incomplete or not-evaluated)
+and `unmapped-evidence` (the verdicts and the groups of required tests of the record that no control
+names). The manifest of an [evidence package](#the-evidence-package) repeats the mapping and the state of
+each control in `control`. A package holds the mapping as the commit checked has it; when the change
+edits the mapping, the one that was evaluated is the base's, named by its commit and SHA-256
+(`git show <commit>:.wingbox/controls.yaml` gives its bytes). Acceptance stays a person's act: a review record of the package, never a
+field the tool fills.
+
+**By hand.** The same evaluation against a record or a package:
+
+```bash
+python wingbox_evidence_cli.py controls --record wingbox-evidence.json --mapping .wingbox/controls.yaml
+python wingbox_evidence_cli.py controls --package wingbox-package.zip [--mapping FILE] [--date 2026-06-30] [--json]
+```
+
+It prints the mapping, each control with its state, reasons and evidence, then `without-evidence` and
+`unmapped-evidence`, and says whether the mapping has the bytes the run evaluated. For a package without
+`--mapping` it takes the mapping the package holds. `--date` judges validity at another day than the day
+of the record. Exit status 0: the mapping was read and no control is not-supported or incomplete; 1: one
+is, or the mapping is refused, or the package does not verify; 2: wrong usage.
+
+The input `controls` (in GitLab `WINGBOX_CONTROLS`) names another path than `.wingbox/controls.yaml`.
+Sixteen worked examples on a small invented repository, each with what a reviewer can and cannot
+conclude, are in [`docs/controls/examples.md`](docs/controls/examples.md).
+
 ## Inputs
 
 | Input | Default | Meaning |
@@ -906,6 +1094,7 @@ period is taken as given, so one that ends in the future ends with a stretch.
 | `test-results` | none | Glob patterns of the JUnit XML reports the test step of the job wrote, one per line (`**` crosses folders). See [Evidence that the tests ran](#evidence-that-the-tests-ran). |
 | `require-tests` | `false` | `true`: fail the job unless every test that uses what changed, and every required test, is `passed` in `test-results`. `strict`: as `true`, and fail a change of source code for which no test was found. |
 | `required-tests` | `.wingbox/required-tests.yaml` | Path of the manifest of required tests, from the root of the repository. See [Required tests](#required-tests). |
+| `controls` | `.wingbox/controls.yaml` | Path of the control mapping, from the root of the repository. The record then says what the run supports for each control. See [Control mapping](#control-mapping). |
 | `test-step-outcome` | none | How the test step of the job ended: `success`, `failure`, `cancelled` or `skipped`. Give it `${{ steps.tests.outcome }}` of a test step with `continue-on-error: true`. After `failure` the test evidence is `failed`. |
 | `test-command` | none | The command of the test step that wrote the test results. Recorded verbatim in the evidence record; not run. |
 | `require-test-provenance` | `false` | Refuse a test report without a matching sidecar. See [Where a test report comes from](#where-a-test-report-comes-from). |
@@ -1004,6 +1193,7 @@ wingbox:
     WINGBOX_TEST_RESULTS: "test-results/*.xml"   # JUnit XML reports of the tests this job ran before the check
     WINGBOX_REQUIRE_TESTS: "true"                # fail unless every test that uses what changed and every required test passed; or "strict"
     WINGBOX_REQUIRED_TESTS: "ci/required-tests.yaml"   # the manifest of required tests; default .wingbox/required-tests.yaml
+    WINGBOX_CONTROLS: "ci/controls.yaml"         # the control mapping; default .wingbox/controls.yaml
     WINGBOX_TEST_COMMAND: "pytest --junitxml=test-results/junit.xml"   # recorded verbatim, not run
     WINGBOX_REQUIRE_TEST_PROVENANCE: "true"      # refuse a test report without a matching sidecar
     WINGBOX_PACKAGE: "true"                      # also write wingbox-out/wingbox-package.zip, the evidence package
@@ -1113,6 +1303,7 @@ then writes no comment, warns, and keeps the report in the job summary.
 python -m unittest discover -s tests          # the report, the diagram, the facts, the metadata
 python tests/make_fixture.py /tmp/fixture     # a repository with a base and a head commit
 python wingbox_evidence_cli.py verify package.zip   # check an evidence package (also: pack, review, append, period)
+python wingbox_evidence_cli.py controls --record wingbox-evidence.json --mapping .wingbox/controls.yaml   # evaluate a control mapping
 python tools/replay.py CLONE BASE HEAD --out DIR   # the comment for a past pull request, locally
 python scripts/bump_version.py 0.10.1         # the default wingbox release (no argument: the newest on PyPI)
 ```
@@ -1132,6 +1323,8 @@ diagram, all pure functions.
 `wingbox_package.py` holds its rules: the archive form, the manifest, the check and the review,
 pure, standard library only and with no import of another module of this repository.
 `wingbox_ledger.py` holds the rules of the ledger and of the report of a period, pure too.
+`wingbox_controls.py` reads a control mapping and evaluates it against a record: pure, standard library
+only and with no import of another module of this repository.
 
 ## License
 

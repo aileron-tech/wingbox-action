@@ -241,12 +241,13 @@ def expected_manifest() -> dict:
         "subject": {"repository": "owner/repo", "base": "a" * 40, "head": COMMIT, "checked": COMMIT, "tree": "head"},
         "run": {"provider": "github", "id": "7", "attempt": "2", "job": "check", "change": "12", "url": "https://github.com/owner/repo/actions/runs/7"},
         "retention": "90 days",
-        "control": {"mapping": "none", "id": "", "edition": "", "scope": "", "owner": "", "applies": "", "risk": ""},
+        "control": {"mapping": "none", "path": "", "sha256": "", "commit": "", "name": "", "version": "", "owner": "", "evaluated": "", "controls": []},
         "stated": [{"name": "build", "value": "41"}, {"name": "model", "value": "m-1"}],
         "policy": {"commit": COMMIT, "read": True, "files": [
             {"path": ".github/workflows/check.yml", "kind": "workflow", "state": "present", "member": "policy:.github/workflows/check.yml"},
             {"path": ".wingbox/baseline.sexp", "kind": "baseline", "state": "present", "member": "policy:.wingbox/baseline.sexp"},
             {"path": ".wingbox/config.yaml", "kind": "rules", "state": "not-in-commit", "member": ""},
+            {"path": ".wingbox/controls.yaml", "kind": "controls", "state": "not-in-commit", "member": ""},
             {"path": ".wingbox/learned.sexp", "kind": "rules", "state": "not-in-commit", "member": ""},
             {"path": ".wingbox/required-tests.yaml", "kind": "required-tests", "state": "not-in-commit", "member": ""},
         ]},
@@ -376,7 +377,7 @@ class ArchiveTest(unittest.TestCase):
 
 class ManifestTest(unittest.TestCase):
     def test_the_manifest_of_a_complete_package(self) -> None:
-        """/* REQ-ACTION-172: `pack` writes manifest.json as the first member: the schema `wingbox-package/1`, the bundle id (the SHA-256 of the lines `<sha256>  <path>` of the members by path), `complete`, the time of the record, the tool, the subject, the run with its address, the retention and the versions stated, the control marked as not mapped, the policy files with the commit they come from, the checks, every member with id, path, role, media type, length, SHA-256, whether it is required, its source and commit, the required members each `present`, the job log as optional, no absent member, the three statements and the place of an attestation; it meets schema/wingbox-package-1.schema.json; the command ends with status 0 and its last line is `pack: complete` */"""
+        """/* REQ-ACTION-172: `pack` writes manifest.json as the first member: the schema `wingbox-package/1`, the bundle id (the SHA-256 of the lines `<sha256>  <path>` of the members by path), `complete`, the time of the record, the tool, the subject, the run with its address, the retention and the versions stated, the control object of a record that evaluated no control mapping (`none`, REQ-ACTION-228), the policy files with the commit they come from, the checks, every member with id, path, role, media type, length, SHA-256, whether it is required, its source and commit, the required members each `present`, the job log as optional, no absent member, the three statements and the place of an attestation; it meets schema/wingbox-package-1.schema.json; the command ends with status 0 and its last line is `pack: complete` */"""
         members = dict(members_of(COMPLETE.read_bytes()))
         said = json.loads(members["manifest.json"])
         expected = expected_manifest()
@@ -456,6 +457,7 @@ class SourcesTest(unittest.TestCase):
         self.assertEqual({"commit": COMMIT, "read": True, "files": [
             {"path": ".wingbox/baseline.sexp", "kind": "baseline", "state": "present", "member": "policy:.wingbox/baseline.sexp"},
             {"path": ".wingbox/config.yaml", "kind": "rules", "state": "not-in-commit", "member": ""},
+            {"path": ".wingbox/controls.yaml", "kind": "controls", "state": "not-in-commit", "member": ""},
             {"path": ".wingbox/learned.sexp", "kind": "rules", "state": "not-in-commit", "member": ""},
             {"path": ".wingbox/required-tests.yaml", "kind": "required-tests", "state": "not-in-commit", "member": ""}]}, said["policy"])
         folder = WORK / "policy"
@@ -795,7 +797,7 @@ class CommandTest(unittest.TestCase):
         self.assertIn("usage: wingbox-evidence verify", usage.stderr)
 
     def test_nothing_is_run_and_nothing_leaves_the_machine(self) -> None:
-        """/* REQ-ACTION-187: wingbox_package.py imports only hashlib, json, re, struct, zlib, dataclasses and typing, and no module of this repository; wingbox_evidence_cli.py adds argparse, datetime, os, subprocess, sys, pathlib, wingbox_package and wingbox_ledger: no network, no archive library that unpacks, no model; the only program the command starts is git, with the words `cat-file` (and `rev-list` for the commits of a branch, REQ-ACTION-205); neither file calls exec, eval, compile, __import__ or os.system */"""
+        """/* REQ-ACTION-187: wingbox_package.py imports only hashlib, json, re, struct, zlib, dataclasses and typing, and no module of this repository; wingbox_evidence_cli.py adds argparse, datetime, os, subprocess, sys, pathlib, wingbox_package, wingbox_ledger and wingbox_controls (pure too, REQ-ACTION-230): no network, no archive library that unpacks, no model; the only program the command starts is git, with the words `cat-file` (and `rev-list` for the commits of a branch, REQ-ACTION-205); neither file calls exec, eval, compile, __import__ or os.system */"""
         def imported(path: Path) -> set:
             names = set()
             for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
@@ -807,7 +809,7 @@ class CommandTest(unittest.TestCase):
         pure = {"__future__", "hashlib", "json", "re", "struct", "zlib", "dataclasses", "typing"}
         self.assertEqual(pure, imported(ROOT / "wingbox_package.py"))
         self.assertEqual(pure - {"hashlib", "struct", "zlib", "dataclasses"} | {"argparse", "datetime", "os", "subprocess", "sys", "pathlib", "wingbox_package",
-                                                                                 "wingbox_ledger"}, imported(ROOT / "wingbox_evidence_cli.py"))
+                                                                                 "wingbox_ledger", "wingbox_controls"}, imported(ROOT / "wingbox_evidence_cli.py"))
         for name in ("wingbox_package.py", "wingbox_evidence_cli.py"):
             tree = ast.parse((ROOT / name).read_text(encoding="utf-8"))
             called = {node.func.id for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
