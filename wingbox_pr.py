@@ -53,9 +53,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))   # the modules next to
 
 import wingbox_changes  # noqa: E402
 from wingbox_facts import (  # noqa: E402,F401
-    BLOCKING_HEADS, FINDING_HEADS, MARKER, WORKING_TREE, ChangedFile, ChangedItem, Dependent, Finding, Item, NotChecked, Report, Route, Site, User,
-    checked_modules, dependents, findings, folder_of, introduced, items, module_of, parse_line, parse_route, selected, untouched,
-    use_sites, users,
+    BLOCKING_HEADS, FINDING_HEADS, MARKER, WORKING_TREE, ChangedFile, ChangedItem, Dependent, Finding, Item, NotChecked, Report, Route, Site,
+    Tree, User, checked_modules, dependents, findings, folder_of, introduced, items, module_of, parse_line, parse_route, relation,
+    selected, untouched, use_sites, users,
 )
 from wingbox_report import (  # noqa: E402,F401
     COMMENT_LIMIT, FACADE_FILES, FAIL_ON, FOLDER_LIMIT, LIST_LIMIT, MAP_ARTIFACT, SUMMARY_LIMIT, build_comment, build_plan,
@@ -92,6 +92,37 @@ def _git(cwd: str, *args: str) -> str:
     if done.returncode != 0:
         raise SystemExit(f"git {' '.join(args)} failed: {done.stderr.strip()}")
     return done.stdout
+
+
+def tree_state(root: str, head: str, ignore: tuple[str, ...]) -> Tree:
+    """The commit of the working folder of root, how it relates to the head named, and the files that are not
+    as in that commit: changed tracked files and untracked files, git's ignore rules applied. `.wingbox/` and
+    the folders of ignore (where this run writes) do not count. Asked before the first build."""
+    checked = _git(root, "rev-parse", "HEAD").strip()
+    named = _git(root, "rev-parse", f"{head}^{{commit}}").strip()
+    parents = tuple(_git(root, "rev-list", "--parents", "-n", "1", "HEAD").split()[1:])
+    excluded = [f":(exclude,top){folder}" for folder in (".wingbox", *ignore)]
+    fields = _git(root, "status", "--porcelain", "--untracked-files=all", "-z", "--", ":(top)", *excluded).split("\0")
+    differs: list[str] = []
+    skip = False
+    for entry in fields:
+        if skip or len(entry) < 4:       # the second name of a rename or a copy: the path it came from
+            skip = False
+            continue
+        differs.append(entry[3:])
+        skip = entry[0] in "RC"
+    return Tree(checked, relation(checked, named, parents), tuple(sorted(differs)))
+
+
+def commit_hashes(root: str, commit: str, paths: list[str]) -> list[tuple[str, str]]:
+    """(path, SHA-256 of its content in the commit), for the paths the commit has: what `git show
+    <commit>:<path> | sha256sum` gives, so anyone with the commit can reproduce it."""
+    found = []
+    for path in paths:
+        done = subprocess.run(["git", "cat-file", "blob", f"{commit}:{path}"], cwd=root, capture_output=True)
+        if done.returncode == 0:
+            found.append((path, hashlib.sha256(done.stdout).hexdigest()))
+    return found
 
 
 def _boundaries(root: str) -> list[str]:
@@ -177,12 +208,14 @@ def changed_items(root: str, changed: ChangedFile, hunks: tuple[wingbox_changes.
     return tuple(sorted(found, key=lambda item: item.line)), other, budget
 
 
-def collect(root: str, base: str, head: str, hops: int, patterns: list[str], version: str) -> Report:
+def collect(root: str, base: str, head: str, hops: int, patterns: list[str], version: str, ignore: tuple[str, ...] = ()) -> Report:
     """Build the graphs of head (root) and base (a worktree) and gather the report's data.
 
     head is a commit, or WORKING_TREE: then the change is the merge base of base and HEAD against the files of
-    root as they are on disk, uncommitted and untracked ones included, and nothing is committed."""
+    root as they are on disk, uncommitted and untracked ones included, and nothing is committed. ignore: the
+    folders of root this run writes into, which do not count as a difference from the commit."""
     working = head == WORKING_TREE
+    tree = Tree("", WORKING_TREE) if working else tree_state(root, head, ignore)
     merge_base = _git(root, "merge-base", base, "HEAD" if working else head).strip()
     if working:
         untracked = [line for line in _git(root, "ls-files", "--others", "--exclude-standard").splitlines() if line]
@@ -216,12 +249,15 @@ def collect(root: str, base: str, head: str, hops: int, patterns: list[str], ver
         except OSError:
             pass
     bent = changed_tests({c.path: (c.module, c.untouched) for c in changed}, hunks)   # untouched still holds every dependent here
-    hashes = []
-    for c in changed:
-        try:
-            hashes.append((c.path, hashlib.sha256((Path(root) / c.path).read_bytes()).hexdigest()))
-        except OSError:
-            pass     # a deleted file has no content at the head
+    hashes: list[tuple[str, str]] = []
+    if working:
+        for c in changed:
+            try:
+                hashes.append((c.path, hashlib.sha256((Path(root) / c.path).read_bytes()).hexdigest()))
+            except OSError:
+                pass     # a deleted file has no content
+    else:
+        hashes = commit_hashes(root, tree.commit, [c.path for c in changed])
     budget = ITEM_QUERIES
     final_list: list[ChangedFile] = []
     for c in changed:
@@ -236,7 +272,7 @@ def collect(root: str, base: str, head: str, hops: int, patterns: list[str], ver
     final = tuple(final_list)
     return Report(version, hops, base, head, final, tuple(new), resolved, tuple(not_checked), tuple(skipped),
                   tests_changed=bent, tool_errors=tuple(dict.fromkeys(TOOL_ERRORS)), hashes=tuple(hashes),
-                  checked_modules=checked_modules(head_lines), skipped_languages=tuple(sorted(SKIPPED_LANGUAGES.items())))
+                  checked_modules=checked_modules(head_lines), skipped_languages=tuple(sorted(SKIPPED_LANGUAGES.items())), tree=tree)
 
 
 def copy_map(root: str, folder: str) -> str:

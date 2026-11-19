@@ -17,7 +17,7 @@ from typing import Optional
 
 import wingbox_changes as changes
 import wingbox_diagram as diagram
-from wingbox_facts import BLOCKING_HEADS, MARKER, WORKING_TREE, ChangedFile, ChangedItem, Dependent, Report, User, folder_of
+from wingbox_facts import BLOCKING_HEADS, MARKER, WORKING_TREE, ChangedFile, ChangedItem, Dependent, Report, Tree, User, folder_of
 
 FAIL_ON = ("none", "violations", "not-checked", "strict")
 LIST_LIMIT = 10    # direct dependents and findings named in the comment; the job summary names them all
@@ -124,7 +124,21 @@ def needs_comment(report: Report) -> bool:
     """A pull request that changes no source module of the graph other than tests gets no comment, unless a
     wingbox command failed or a language was left out: then the comment says what could not be checked."""
     return (any(c.module is not None and not is_test(c.path) for c in report.changed) or bool(report.introduced)
-            or bool(report.tool_errors) or bool(report.skipped_languages))
+            or bool(report.tool_errors) or bool(report.skipped_languages) or bool(_tree_reasons(report)))
+
+
+def _tree_reasons(report: Report) -> tuple[str, ...]:
+    """Why the files analysed are not the commit the report names; empty when they are (the head, or its merge
+    into the base, with no file changed since)."""
+    tree = report.tree
+    if tree is None or tree.relation == WORKING_TREE:
+        return ()
+    reasons = []
+    if tree.relation == "other":
+        reasons.append(f"tree-not-at-head: checked {tree.commit[:12]}, named {report.head[:12]}")
+    if tree.differs:
+        reasons.append(f"tree-differs-from-commit: {len(tree.differs)} file(s)")
+    return tuple(reasons)
 
 
 def result(report: Report) -> tuple[str, str, tuple[str, ...]]:
@@ -138,11 +152,13 @@ def result(report: Report) -> tuple[str, str, tuple[str, ...]]:
     unchecked = tuple(f"not-checked: {part.part} ({part.reason})" for part in report.not_checked)
     left_out = tuple(f"skipped-language: {name} ({files} files)" for name, files in report.skipped_languages)
     blocking = sum(1 for finding in report.introduced if finding.head in BLOCKING_HEADS)
+    tree = _tree_reasons(report)
     if blocking:
-        return "FAIL", execution, (f"introduced-violations: {blocking}", *errors, *left_out)
-    if errors or left_out:
-        # Before "no source module changed": the changed files may be of the language that was left out.
-        return "UNKNOWN", execution, (*errors, *left_out, *unchecked)
+        return "FAIL", execution, (f"introduced-violations: {blocking}", *errors, *left_out, *tree)
+    if errors or left_out or tree:
+        # Before "no source module changed": the changed files may be of the language that was left out, and a
+        # report about another tree than the one named says nothing about the one named.
+        return "UNKNOWN", execution, (*errors, *left_out, *tree, *unchecked)
     if not needs_comment(report):
         return "NOT_APPLICABLE", execution, ("no-source-module-changed",)
     if unchecked:
@@ -364,7 +380,7 @@ def build_plan(report: Report) -> str:
     every `look` line is a place to open, every `run-test` line a test to run."""
     outcome, execution, reasons = result(report)
     lines = [f"(review-plan :schema {PLAN_SCHEMA} :result {outcome} :execution {execution} :base {report.base} :head {report.head} "
-             f":wingbox {_q(report.version)} :hops {report.hops})"]
+             f":wingbox {_q(report.version)} :hops {report.hops}{_tree_keys(report.tree)})"]
     lines += [f"(reason {_q(reason)})" for reason in reasons]
     lines += [f"(finding {finding.head} {_q(finding.text)})" for finding in report.introduced]
     named = changed_items(report)
@@ -387,8 +403,23 @@ def build_plan(report: Report) -> str:
     lines += [f"(skipped-language {_atom(name)} :files {files})" for name, files in report.skipped_languages]
     if report.checked_modules is not None:
         lines.append(f"(checked :modules {report.checked_modules})")
-    lines += [f"(changed-file {_q(path)} :sha256 {digest})" for path, digest in report.hashes]
+    commit = f" :commit {report.tree.commit}" if report.tree is not None and report.tree.commit else ""
+    lines += [f"(changed-file {_q(path)} :sha256 {digest}{commit})" for path, digest in report.hashes]
+    if report.tree is not None:
+        lines += [f"(tree-differs {_q(path)})" for path in report.tree.differs[:DIFFERS_LIMIT]]
+        if len(report.tree.differs) > DIFFERS_LIMIT:
+            lines.append(f"(tree-differs-more :hidden {len(report.tree.differs) - DIFFERS_LIMIT})")
     return "\n".join(lines)
+
+
+DIFFERS_LIMIT = 50   # differing files named in the plan; the reason of the result holds the count of them all
+
+
+def _tree_keys(tree: Optional[Tree]) -> str:
+    """The keys of the plan's head line that say which files were analysed."""
+    if tree is None:
+        return ""
+    return f" :tree {tree.relation}" if not tree.commit else f" :checked {tree.commit} :tree {tree.relation}"
 
 
 _PLAN_WORK = ("(finding ", "(look ", "(look-module ", "(run-test ", "(test-changed ")
@@ -410,6 +441,9 @@ def build_comment(report: Report, full: bool = False) -> str:
     changes only documents, configuration or tests gets one line."""
     head = ("head: the working directory (uncommitted and untracked files included)" if report.head == WORKING_TREE
             else f"head {_code(report.head[:7])}")
+    tree = report.tree
+    if tree is not None and tree.relation == "merge":
+        head += f", checked as merged into the base (commit {_code(tree.commit[:7])})"
     footer = (f"<sub>[Wingbox]({SITE}) {report.version}, base {_code(report.base[:7])}, {head}. "
               "Built and checked on the runner, without a language model; no code left it.</sub>")
     if not needs_comment(report):
@@ -431,6 +465,19 @@ def build_comment(report: Report, full: bool = False) -> str:
                     "is not installed in this run (install `wingbox[all]`). What uses them, and what they use, is not in "
                     "this report. The result is UNKNOWN, not a pass.")
         problem = f"{problem}\n\n{left_out}" if problem else left_out
+    if _tree_reasons(report) and tree is not None:
+        said_tree = []
+        if tree.relation == "other":
+            said_tree.append(f"The files checked are commit {_code(tree.commit[:7])}, not the head named ({_code(report.head[:7])}).")
+        if tree.differs:
+            shown = ", ".join(_code(path) for path in tree.differs[:3])
+            more = f" and {len(tree.differs) - 3} more" if len(tree.differs) > 3 else ""
+            count = f"{len(tree.differs):,} file{'' if len(tree.differs) == 1 else 's'}"
+            said_tree.append(f"{count} of the working folder {'is' if len(tree.differs) == 1 else 'are'} not as in commit "
+                             f"{_code(tree.commit[:7])} ({shown}{more}).")
+        other_tree = (f"**Wingbox** did not check the commit this report names. {' '.join(said_tree)} "
+                      "The result is UNKNOWN, not a pass.")
+        problem = f"{problem}\n\n{other_tree}" if problem else other_tree
     if problem and (_build_failed(report) or nothing_else):
         # Without a graph, or without a changed module in it, the usual report would be made of empty answers:
         # say only what was not checked.

@@ -140,6 +140,15 @@ def dotenv(values: Mapping[str, str]) -> str:
     return "".join(line + "\n" for line in lines)
 
 
+def _inside(root: str, out: Path) -> tuple[str, ...]:
+    """The output folder as a path inside the repository, when it lies there: what this run writes there is
+    not a difference between the working folder and its commit."""
+    try:
+        return (out.resolve().relative_to(Path(root).resolve()).as_posix(),)
+    except ValueError:
+        return ()
+
+
 def main() -> int:
     env = with_keys(sys.argv[1:], os.environ)
     root = os.path.abspath(env.get("WINGBOX_ROOT") or os.getcwd())
@@ -160,7 +169,8 @@ def main() -> int:
         print(f'ERROR: the base commit {chosen.base[:12]} is not in the checkout: set GIT_DEPTH: "0" for this job')
         return 2
     patterns = [p.strip() for p in env.get("WINGBOX_PATHS", "").splitlines() if p.strip()]
-    report = pr.collect(root, chosen.base, chosen.head, int(env.get("WINGBOX_HOPS", "2")), patterns, env.get("WINGBOX_VERSION", "?"))
+    report = pr.collect(root, chosen.base, chosen.head, int(env.get("WINGBOX_HOPS", "2")), patterns, env.get("WINGBOX_VERSION", "?"),
+                        ignore=_inside(root, out))
     comment = in_gitlab_words(pr.cut(pr.build_comment(report), pr.COMMENT_LIMIT))
     outcome, execution, reasons = pr.result(report)
     (out / "wingbox-report.md").write_text(in_gitlab_words(pr.cut(pr.build_comment(report, full=True), pr.SUMMARY_LIMIT)),
