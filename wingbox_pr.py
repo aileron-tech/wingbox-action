@@ -36,6 +36,8 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import datetime
+import glob
 import hashlib
 import json
 import os
@@ -52,18 +54,24 @@ from typing import Any, Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent))   # the modules next to this file, however it is loaded
 
 import wingbox_changes  # noqa: E402
+import wingbox_evidence  # noqa: E402
+import wingbox_tests  # noqa: E402
 from wingbox_facts import (  # noqa: E402,F401
-    BLOCKING_HEADS, FINDING_HEADS, MARKER, WORKING_TREE, ChangedFile, ChangedItem, Dependent, Finding, Item, NotChecked, Report, Route, Site, User,
-    checked_modules, dependents, findings, folder_of, introduced, items, module_of, parse_line, parse_route, selected, untouched,
-    use_sites, users,
+    BLOCKING_HEADS, FINDING_HEADS, MARKER, WORKING_TREE, ChangedFile, ChangedItem, Dependent, Finding, Item, NotChecked, Report, Route, Site,
+    Tree, User, checked_modules, dependents, findings, folder_of, introduced, items, module_of, parse_line, parse_route, relation,
+    selected, untouched, use_sites, users,
 )
 from wingbox_report import (  # noqa: E402,F401
     COMMENT_LIMIT, FACADE_FILES, FAIL_ON, FOLDER_LIMIT, LIST_LIMIT, MAP_ARTIFACT, SUMMARY_LIMIT, build_comment, build_plan,
-    changed_tests, cut, exit_status, is_facade, is_parent, is_test, needs_comment, result, tests_to_run, untouched_count, uses,
+    changed_tests, cut, evidence_counts, exit_status, is_facade, is_parent, is_test, needs_comment, outputs, result, test_evidence,
+    tests_status, tests_to_run, untouched_count, uses,
 )
 
 # Wingbox commands that ended abnormally in this run: the result is then UNKNOWN, never a pass.
 TOOL_ERRORS: list[str] = []
+# Languages a build left out because their parser is not installed (name -> files): the result is then UNKNOWN.
+SKIPPED_LANGUAGES: dict[str, int] = {}
+_SKIPPED_LANGUAGE = re.compile(r"\(skipped-language (\S+) :files (\d+)")
 
 
 def _run(argv: list[str], cwd: str) -> subprocess.CompletedProcess[str]:
@@ -71,7 +79,11 @@ def _run(argv: list[str], cwd: str) -> subprocess.CompletedProcess[str]:
 
 
 def _wingbox(cwd: str, *args: str) -> list[str]:
-    done = _run([sys.executable, "-m", "wingbox", *args], cwd)
+    # -P: the command runs in the checked repository, and `python -m` would put that folder first on the module
+    # search path, so a folder `wingbox/` of the repository would run in place of the installed Wingbox.
+    done = _run([sys.executable, "-P", "-m", "wingbox", *args], cwd)
+    for name, files in _SKIPPED_LANGUAGE.findall(f"{done.stderr}\n{done.stdout}"):
+        SKIPPED_LANGUAGES[name] = max(SKIPPED_LANGUAGES.get(name, 0), int(files))
     # A query may end with 1 or 2 (boundaries found violations, a name is unknown); a build must end with 0:
     # without a graph every later answer is empty, and an empty answer reads as "nothing to check".
     if done.returncode not in ((0,) if args[:1] == ("build",) else (0, 1, 2)):
@@ -85,6 +97,40 @@ def _git(cwd: str, *args: str) -> str:
     if done.returncode != 0:
         raise SystemExit(f"git {' '.join(args)} failed: {done.stderr.strip()}")
     return done.stdout
+
+
+def tree_state(root: str, head: str, ignore: tuple[str, ...]) -> Tree:
+    """The commit of the working folder of root, how it relates to the head named, and the files that are not
+    as in that commit: changed tracked files and untracked source files, git's ignore rules applied. `.wingbox/` and
+    the folders of ignore (where this run writes) do not count. Asked before the first build."""
+    checked = _git(root, "rev-parse", "HEAD").strip()
+    named = _git(root, "rev-parse", f"{head}^{{commit}}").strip()
+    parents = tuple(_git(root, "rev-list", "--parents", "-n", "1", "HEAD").split()[1:])
+    excluded = [f":(exclude,top){folder}" for folder in (".wingbox", *ignore)]
+    fields = _git(root, "status", "--porcelain", "--untracked-files=all", "-z", "--", ":(top)", *excluded).split("\0")
+    differs: list[str] = []
+    skip = False
+    for entry in fields:
+        if skip or len(entry) < 4:       # the second name of a rename or a copy: the path it came from
+            skip = False
+            continue
+        skip = entry[0] in "RC"
+        # An untracked file counts when Wingbox would read it as source; a test report or a build log does not
+        # change the graph.
+        if not entry.startswith("??") or wingbox_tests.SOURCE_FILE.search(entry[3:]):
+            differs.append(entry[3:])
+    return Tree(checked, relation(checked, named, parents), tuple(sorted(differs)))
+
+
+def commit_hashes(root: str, commit: str, paths: list[str]) -> list[tuple[str, str]]:
+    """(path, SHA-256 of its content in the commit), for the paths the commit has: what `git show
+    <commit>:<path> | sha256sum` gives, so anyone with the commit can reproduce it."""
+    found = []
+    for path in paths:
+        done = subprocess.run(["git", "cat-file", "blob", f"{commit}:{path}"], cwd=root, capture_output=True)
+        if done.returncode == 0:
+            found.append((path, hashlib.sha256(done.stdout).hexdigest()))
+    return found
 
 
 def _boundaries(root: str) -> list[str]:
@@ -170,12 +216,14 @@ def changed_items(root: str, changed: ChangedFile, hunks: tuple[wingbox_changes.
     return tuple(sorted(found, key=lambda item: item.line)), other, budget
 
 
-def collect(root: str, base: str, head: str, hops: int, patterns: list[str], version: str) -> Report:
+def collect(root: str, base: str, head: str, hops: int, patterns: list[str], version: str, ignore: tuple[str, ...] = ()) -> Report:
     """Build the graphs of head (root) and base (a worktree) and gather the report's data.
 
     head is a commit, or WORKING_TREE: then the change is the merge base of base and HEAD against the files of
-    root as they are on disk, uncommitted and untracked ones included, and nothing is committed."""
+    root as they are on disk, uncommitted and untracked ones included, and nothing is committed. ignore: the
+    folders of root this run writes into, which do not count as a difference from the commit."""
     working = head == WORKING_TREE
+    tree = Tree("", WORKING_TREE) if working else tree_state(root, head, ignore)
     merge_base = _git(root, "merge-base", base, "HEAD" if working else head).strip()
     if working:
         untracked = [line for line in _git(root, "ls-files", "--others", "--exclude-standard").splitlines() if line]
@@ -209,12 +257,15 @@ def collect(root: str, base: str, head: str, hops: int, patterns: list[str], ver
         except OSError:
             pass
     bent = changed_tests({c.path: (c.module, c.untouched) for c in changed}, hunks)   # untouched still holds every dependent here
-    hashes = []
-    for c in changed:
-        try:
-            hashes.append((c.path, hashlib.sha256((Path(root) / c.path).read_bytes()).hexdigest()))
-        except OSError:
-            pass     # a deleted file has no content at the head
+    hashes: list[tuple[str, str]] = []
+    if working:
+        for c in changed:
+            try:
+                hashes.append((c.path, hashlib.sha256((Path(root) / c.path).read_bytes()).hexdigest()))
+            except OSError:
+                pass     # a deleted file has no content
+    else:
+        hashes = commit_hashes(root, tree.commit, [c.path for c in changed])
     budget = ITEM_QUERIES
     final_list: list[ChangedFile] = []
     for c in changed:
@@ -229,7 +280,46 @@ def collect(root: str, base: str, head: str, hops: int, patterns: list[str], ver
     final = tuple(final_list)
     return Report(version, hops, base, head, final, tuple(new), resolved, tuple(not_checked), tuple(skipped),
                   tests_changed=bent, tool_errors=tuple(dict.fromkeys(TOOL_ERRORS)), hashes=tuple(hashes),
-                  checked_modules=checked_modules(head_lines))
+                  checked_modules=checked_modules(head_lines), skipped_languages=tuple(sorted(SKIPPED_LANGUAGES.items())), tree=tree)
+
+
+def read_test_results(folder: str, patterns: list[str]) -> tuple[Optional[tuple[wingbox_tests.Case, ...]],
+                                                                 tuple[wingbox_tests.TestReport, ...], tuple[tuple[str, str], ...]]:
+    """(the cases of the JUnit XML reports the patterns find under folder; the files read, each with the
+    SHA-256 of its bytes; the files and patterns that gave nothing, with the reason). Without a pattern no
+    test report was given: (None, (), ())."""
+    if not patterns:
+        return None, (), ()
+    cases: list[wingbox_tests.Case] = []
+    reports: list[wingbox_tests.TestReport] = []
+    errors: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for pattern in patterns:
+        found = sorted(name.replace(os.sep, "/") for name in glob.glob(pattern, root_dir=folder, recursive=True)
+                       if os.path.isfile(os.path.join(folder, name)))
+        if not found:
+            errors.append((pattern, "no file matches this pattern"))
+        for name in found:
+            if name in seen:
+                continue
+            seen.add(name)
+            try:
+                data = (Path(folder) / name).read_bytes()
+                read = wingbox_tests.parse_junit(data)
+            except (OSError, ValueError) as error:
+                errors.append((name, str(error)))
+                continue
+            cases += read
+            reports.append(wingbox_tests.TestReport(name, hashlib.sha256(data).hexdigest(), len(read)))
+    return tuple(cases), tuple(reports), tuple(errors)
+
+
+def with_test_results(report: Report, env: Any, root: str) -> Report:
+    """The report with the test reports the job hands over: the patterns of WINGBOX_TEST_RESULTS (one per
+    line), looked for under WINGBOX_TEST_RESULTS_ROOT, else under the repository."""
+    patterns = [p.strip() for p in env.get("WINGBOX_TEST_RESULTS", "").splitlines() if p.strip()]
+    cases, reports, errors = read_test_results(env.get("WINGBOX_TEST_RESULTS_ROOT") or root, patterns)
+    return dataclasses.replace(report, test_cases=cases, test_reports=reports, test_report_errors=errors)
 
 
 def copy_map(root: str, folder: str) -> str:
@@ -268,6 +358,39 @@ def post_comment(body: str, repository: str, number: int, token: str, api: str, 
         return "no comment: no source module changed"
     created, _ = call("POST", f"{api}/repos/{repository}/issues/{number}/comments", {"body": body})
     return f"created comment {created.get('id')}"
+
+
+def tests_failed(report: Report, env: Any) -> int:
+    """1, with the reason said, when WINGBOX_REQUIRE_TESTS is true and a test to run has no passing record."""
+    status = tests_status(report, env.get("WINGBOX_REQUIRE_TESTS", "false") == "true")
+    if status:
+        found = test_evidence(report)
+        missing = len(tests_to_run(report)) if found is None else sum(1 for item in found if item.status != wingbox_tests.PASSED)
+        print(f"Wingbox: require-tests: {missing} test(s) that use what changed have no passing record"
+              + (" (no test report was given)" if found is None else " in the test reports given"))
+    return status
+
+
+def now() -> str:
+    """The UTC time, as the evidence record writes it."""
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def github_run(env: Any, change: str) -> wingbox_evidence.Run:
+    """The run as GitHub Actions names it; outside it a local run."""
+    if env.get("GITHUB_ACTIONS") != "true":
+        return wingbox_evidence.Run("local", "", "", "", "", "", now())
+    repository, run_id = env.get("GITHUB_REPOSITORY", ""), env.get("GITHUB_RUN_ID", "")
+    url = f"{env.get('GITHUB_SERVER_URL', 'https://github.com')}/{repository}/actions/runs/{run_id}" if repository and run_id else ""
+    return wingbox_evidence.Run("github", repository, change, run_id, url, env.get("GITHUB_ACTION_REF", ""), now())
+
+
+def write_evidence(report: Report, run: wingbox_evidence.Run, folder: str, documents: dict[str, str]) -> str:
+    """Write the evidence record of the run into folder; returns its path."""
+    path = os.path.join(folder, wingbox_evidence.FILE_NAME)
+    record = wingbox_evidence.build_evidence(report, run, documents)
+    Path(path).write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
+    return path
 
 
 def _append(path: str, text: str) -> None:
@@ -315,6 +438,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     patterns = [p.strip() for p in env.get("WINGBOX_PATHS", "").splitlines() if p.strip()]
     upload_map = env.get("WINGBOX_UPLOAD_MAP", "false") == "true"
     report = collect(root, base, head, int(env.get("WINGBOX_HOPS", "2")), patterns, env.get("WINGBOX_VERSION", "?"))
+    report = with_test_results(report, env, root)
     map_path = copy_map(root, temp) if upload_map else ""
     if upload_map and not map_path:
         print("::warning::no .wingbox/map.html to upload: wingbox build wrote no map")
@@ -329,15 +453,17 @@ def main(argv: Optional[list[str]] = None) -> int:
     report_path = os.path.join(temp, "wingbox-report.md")
     Path(report_path).write_text(summary, encoding="utf-8", newline="\n")
     plan_path = os.path.join(temp, "wingbox-plan.sexp")
-    Path(plan_path).write_text(build_plan(report) + "\n", encoding="utf-8", newline="\n")
-    outcome, execution, reasons = result(report)
+    plan = build_plan(report) + "\n"
+    Path(plan_path).write_text(plan, encoding="utf-8", newline="\n")
+    evidence_path = write_evidence(report, github_run(env, str(pull.get("number") or "")), temp,
+                                   {"wingbox-report.md": summary, "wingbox-plan.sexp": plan})
+    values = outputs(report)
+    outcome, execution, reasons = values["result"], values["execution"], values["reasons"]
     if env.get("GITHUB_OUTPUT"):
-        _append(env["GITHUB_OUTPUT"], f"report={report_path}\nmap={map_path}\nuntouched-dependents={untouched_count(report)}\n"
-                                      f"introduced-findings={len(report.introduced)}\nnot-checked-parts={len(report.not_checked)}\n"
-                                      f"plan={plan_path}\nresult={outcome}\nexecution={execution}\nreasons={'; '.join(reasons)}\n"
-                                      f"tests-to-run={len(tests_to_run(report))}\n")
+        _append(env["GITHUB_OUTPUT"], f"report={report_path}\nmap={map_path}\nplan={plan_path}\nevidence={evidence_path}\n"
+                                      + "".join(f"{name}={value}\n" for name, value in values.items()))
     print(comment)
-    print(f"Result of the boundary check: {outcome} (execution {execution})" + (f": {'; '.join(reasons)}" if reasons else ""))
+    print(f"Result of the boundary check: {outcome} (execution {execution})" + (f": {reasons}" if reasons else ""))
     if env.get("WINGBOX_COMMENT", "true") == "true" and pull.get("number"):
         try:
             print(post_comment(comment, env["GITHUB_REPOSITORY"], int(pull["number"]), env.get("WINGBOX_TOKEN", ""),
@@ -345,7 +471,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         except (urllib.error.URLError, KeyError, ValueError) as error:
             # A pull request from a fork gets a read-only token: the summary still holds the report.
             print(f"::warning::could not write the pull request comment ({error}); the report is in the job summary")
-    return exit_status(report, fail_on)
+    return max(exit_status(report, fail_on), tests_failed(report, env))
 
 
 if __name__ == "__main__":

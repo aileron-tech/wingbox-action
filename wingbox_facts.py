@@ -13,6 +13,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
+from wingbox_tests import Case, TestReport
+
 MARKER = "<!-- wingbox-pull-request-report -->"
 # The head of a check of a working directory: the files as they are on disk, not a commit.
 WORKING_TREE = "working-tree"
@@ -116,6 +118,22 @@ class NotChecked:
 
 
 @dataclass(frozen=True)
+class Tree:
+    """The files that were analysed: the commit of the working folder, and how it relates to the head named."""
+    commit: str                      # "" when the working directory itself is the head (no commit)
+    relation: str                    # "head", "merge" (the merge of the head into the base), "other", or WORKING_TREE
+    differs: tuple[str, ...] = ()    # files of the working folder that are not as in that commit (changed or untracked)
+
+
+def relation(checked: str, head: str, parents: tuple[str, ...]) -> str:
+    """How the commit of the working folder relates to the head named: the same commit, a merge commit that
+    has the head among its parents (what a pull request checkout gives by default), or another commit."""
+    if checked == head:
+        return "head"
+    return "merge" if len(parents) > 1 and head in parents else "other"
+
+
+@dataclass(frozen=True)
 class Report:
     version: str
     hops: int
@@ -129,8 +147,13 @@ class Report:
     map_run: str = ""                               # the workflow run that holds the map artifact, when uploaded
     tests_changed: tuple[tuple[str, str], ...] = field(default=())   # (test file, source file it tests), both changed
     tool_errors: tuple[str, ...] = field(default=())                 # wingbox commands that ended abnormally
-    hashes: tuple[tuple[str, str], ...] = field(default=())          # (changed file, SHA-256 of its content at the head)
+    hashes: tuple[tuple[str, str], ...] = field(default=())          # (changed file, SHA-256 of its content in the commit checked)
+    tree: Optional[Tree] = None                                      # the files analysed; None when not looked at
+    test_cases: Optional[tuple[Case, ...]] = None                    # the cases of the test reports given; None: none was given
+    test_reports: tuple[TestReport, ...] = field(default=())         # the report files that were read
+    test_report_errors: tuple[tuple[str, str], ...] = field(default=())   # (file or pattern, why it gave no cases)
     checked_modules: Optional[int] = None                            # modules the boundary rules were checked on, when known
+    skipped_languages: tuple[tuple[str, int], ...] = field(default=())   # (language, files) left out: its parser is not installed
 
 
 # ---------------------------------------------------------------------------

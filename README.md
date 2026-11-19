@@ -139,6 +139,10 @@ jobs:
 `fetch-depth: 0` is needed: the action compares the head of the pull request
 with its base, so the base commit must be in the checkout.
 
+The action installs Wingbox with the parser of every language
+(`wingbox[all]`). It reads the repository and never runs it: every Python it
+starts leaves the checkout off its module search path.
+
 The action is a composite action (Python and git, no container), and its test
 workflow runs it on `ubuntu-latest`, `macos-latest` and `windows-latest`.
 Wingbox parses Python, TypeScript, Rust, C#, Java, Go, Ruby, PHP, Dart and
@@ -220,22 +224,24 @@ writes the same plan to a file (output `plan`). It is a list of S-expression
 lines in the order to check:
 
 ```lisp
-(review-plan :schema 1 :result UNKNOWN :execution ok :base <sha> :head <sha> :wingbox "0.11.0" :hops 2)
+(review-plan :schema 1 :result UNKNOWN :execution ok :base <sha> :head <sha> :wingbox "0.11.0" :hops 2 :checked <sha> :tree merge)
 (reason "not-checked: . (no-layer-style)")
 (changed-item "src/billing/invoice.py" total :kind fn :line 12 :how changed)
 (look "src/api/orders.py" 40 :module src/api/orders :why call :item total :places 2)
-(run-test "tests/test_invoice.py" :uses total)
+(run-test "tests/test_invoice.py" :uses total :evidence passed :cases 4)
+(test-report "test-results/junit.xml" :sha256 <digest> :cases 212)
 (test-changed "tests/test_invoice.py" :tests "src/billing/invoice.py")
 (not-checked "." :reason no-layer-style)
-(changed-file "src/billing/invoice.py" :sha256 <digest>)
+(changed-file "src/billing/invoice.py" :sha256 <digest> :commit <sha>)
 ```
 
 `look` is a place outside the pull request that uses a changed item: open it.
 `look-module` is a module that uses a file whose other code changed.
 `run-test` is a test that uses what changed. `changed-item ... :how calls
 :via (a b)` means the item calls `a`, which calls `b`, which changed.
-`changed-file` gives the SHA-256 of the file at the head commit, so a reader
-can check that it looks at the same content. To hand the plan to a reviewing
+`changed-file` gives the SHA-256 of the file in the commit that was checked,
+what `git show <commit>:<path> | sha256sum` prints, so a reader can check that
+it looks at the same content. To hand the plan to a reviewing
 agent in the same job:
 
 ```yaml
@@ -251,13 +257,81 @@ The action sets the outputs `result`, `execution` and `reasons`:
 | result | when |
 |---|---|
 | `FAIL` | the pull request introduces a layer, capability or pattern violation |
-| `UNKNOWN` | a part of the repository was not checked, or a wingbox command ended abnormally (`execution` is then `error`) |
+| `UNKNOWN` | a part of the repository was not checked; a wingbox command ended abnormally (`execution` is then `error`); files of a language were left out because its parser is not installed; or the files checked are not the commit the report names |
 | `NOT_APPLICABLE` | no source file outside the tests changed |
 | `PASS` | none of the above |
 
 `fail-on: strict` fails the job on `FAIL` and on `UNKNOWN`. The result is
 about the boundary rules; the list of who uses what changed is information for
 the reviewer and never fails a job.
+
+### Which commit was checked
+
+The graph is built from the files of the checkout, so the report says which
+commit these files are (`:checked` in the plan) and how it relates to the head
+of the pull request (`:tree`):
+
+| tree | the checkout is |
+|---|---|
+| `head` | the head commit itself |
+| `merge` | the merge of the head into the base: what `actions/checkout` gives on `pull_request`, and what would land |
+| `other` | another commit: the result is `UNKNOWN` |
+
+Before it builds the graph the action compares the checkout with that commit.
+A tracked file that was changed, or an untracked source file, is named
+(`tree-differs`) and makes the result `UNKNOWN`: the report would describe
+files that are in no commit. Files git ignores, `.wingbox/` and files that are
+not source (a test report, a build log) do not count. To check exactly the
+head commit, check it out:
+
+```yaml
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+```
+
+### Evidence that the tests ran
+
+The check names the tests that use what changed; it never runs them. When
+the job runs its tests before the check and they write JUnit XML reports,
+hand these over:
+
+```yaml
+      - run: python -P -m pytest --junitxml=test-results/junit.xml
+      - uses: aileron-tech/wingbox-action@v1
+        with:
+          test-results: test-results/*.xml
+          require-tests: true     # optional: fail unless every test that uses what changed has a passed record
+```
+
+Each `run-test` line of the plan then says what the reports hold about that
+test, `:evidence passed`, `failed`, `skipped` or `no-record`, with the number
+of recorded cases, and each report file is named with its SHA-256
+(`test-report`). The comment counts them: "Tests that use what changed (5): 4
+passed, 1 without a record in the test report". Without `test-results` every
+line says `:evidence none`. A test is matched with the cases of its file: by
+the file a report names, by the dotted class name of a Python test, by the
+end of a Java or C# class name, by the package of a Go test file. A report
+that declares a document type, or is not a JUnit report, is refused and named.
+`require-tests` is separate from `fail-on`: it does not change the result of
+the boundary check.
+
+### The evidence record
+
+Each run also writes `wingbox-evidence.json` (output `evidence`; in GitLab in
+`wingbox-out/`): one JSON document for a system that keeps evidence of change
+control. It holds the repository and the run, the base, the head, the commit
+that was checked, the result with its reasons, the counts, the changed files
+with their SHA-256, the tests to run with their evidence and the test reports,
+and the SHA-256 of the report and of the plan written beside it. Its shape is
+[`schema/wingbox-evidence-1.schema.json`](schema/wingbox-evidence-1.schema.json).
+
+[`examples/evidence-handover.yml`](examples/evidence-handover.yml) is a
+workflow in two jobs: the check, which reads the pull request and holds no
+secret but the default token, and a hand-over job that never checks out the
+code, takes the record as an artifact and posts it to an HTTP endpoint with a
+secret only that job holds.
 
 ### The diagram
 
@@ -279,7 +353,7 @@ same pull request always gives the same diagram.
 
 | Input | Default | Meaning |
 |---|---|---|
-| `version` | the current wingbox release | The wingbox release installed from PyPI. The names of what a dependent uses and the paths of the farther dependents need 0.10.0 or newer. |
+| `version` | the current wingbox release | The wingbox release installed from PyPI, with the parser of every language. The names of what a dependent uses and the paths of the farther dependents need 0.10.0 or newer. |
 | `hops` | `2` | How far dependents are followed from each changed file. |
 | `fail-on` | `none` | `none`; `violations`: fail when the pull request introduces a layer, capability or pattern violation; `not-checked`: fail when a part of the repository could not be checked. |
 | `comment` | `true` | Write the report as a comment on the pull request. With `false` the report is only in the job summary. |
@@ -289,6 +363,8 @@ same pull request always gives the same diagram.
 | `base` | the base of the pull request | Base commit, for a run outside `pull_request`. |
 | `head` | the head of the pull request | Head commit. |
 | `working-directory` | `.` | The checkout of the repository. |
+| `test-results` | none | Glob patterns of the JUnit XML reports the test step of the job wrote, one per line (`**` crosses folders). See [Evidence that the tests ran](#evidence-that-the-tests-ran). |
+| `require-tests` | `false` | Fail the job when a test that uses what changed has no passed record in `test-results`. |
 | `github-token` | `github.token` | Token for the comment. |
 
 ## Outputs
@@ -300,6 +376,15 @@ same pull request always gives the same diagram.
 | `untouched-dependents` | Number of different modules that depend on a changed file and are not changed. |
 | `introduced-findings` | Number of boundary findings the pull request introduces. |
 | `not-checked-parts` | Number of parts `wingbox boundaries` could not check. |
+| `plan` | Path of the review plan (S-expression lines) on the runner. |
+| `evidence` | Path of the evidence record of the run (`wingbox-evidence.json`). |
+| `result` | `PASS`, `FAIL`, `UNKNOWN` or `NOT_APPLICABLE`: the result of the boundary check. |
+| `execution` | `ok`, or `error` when a wingbox command ended abnormally. |
+| `reasons` | The reasons of the result, separated by semicolons; empty for `PASS`. |
+| `tests-to-run` | Number of tests that use what the pull request changes. |
+| `tests-passed` | Number of those tests with a passed record in `test-results`; empty without test results. |
+| `tests-failed` | Number of those tests with a failed record; empty without test results. |
+| `tests-without-record` | Number of those tests that were skipped or are not in the test results; empty without test results. |
 
 ## GitLab CI
 
@@ -327,12 +412,13 @@ prints the report into the job log:
 
 What it leaves:
 
-- `wingbox-out/wingbox-report.md` and `wingbox-out/wingbox-plan.sexp` (the review plan for an
-  agent) as job artifacts;
+- `wingbox-out/wingbox-report.md`, `wingbox-out/wingbox-plan.sexp` (the review plan for an
+  agent) and `wingbox-out/wingbox-evidence.json` (the evidence record) as job artifacts;
 - `wingbox-out/wingbox.env` as a dotenv report, so later jobs of the pipeline read
   `WINGBOX_RESULT` (PASS, FAIL, UNKNOWN, NOT_APPLICABLE), `WINGBOX_EXECUTION`, `WINGBOX_REASONS`,
-  `WINGBOX_TESTS_TO_RUN`, `WINGBOX_INTRODUCED_FINDINGS`, `WINGBOX_UNTOUCHED_DEPENDENTS` and
-  `WINGBOX_NOT_CHECKED_PARTS`;
+  `WINGBOX_TESTS_TO_RUN`, `WINGBOX_TESTS_PASSED`, `WINGBOX_TESTS_FAILED`,
+  `WINGBOX_TESTS_WITHOUT_RECORD`, `WINGBOX_INTRODUCED_FINDINGS`, `WINGBOX_UNTOUCHED_DEPENDENTS`
+  and `WINGBOX_NOT_CHECKED_PARTS`;
 - one note on the merge request, updated on each push, when the CI/CD variable
   `WINGBOX_GITLAB_TOKEN` holds a project access token with the `api` scope (mask the variable).
   The job token cannot write notes; without the variable the report stays in the log and the
@@ -347,7 +433,13 @@ wingbox:
     WINGBOX_HOPS: "2"
     WINGBOX_VERSION: "0.11.0"     # the wingbox release from PyPI
     WINGBOX_ACTION_REF: "v1"      # the tag, branch or commit of this repository the scripts come from
+    WINGBOX_TEST_RESULTS: "test-results/*.xml"   # JUnit XML reports of the tests this job ran before the check
+    WINGBOX_REQUIRE_TESTS: "true"                # fail unless every test that uses what changed has a passed record
 ```
+
+The check runs in the `script` of the job; to hand over test reports, run the tests in
+`before_script` of the same job (or fetch them as artifacts of an earlier job) so the files are
+there when the check starts. See [Evidence that the tests ran](#evidence-that-the-tests-ran).
 
 A cautious setup pins a commit in both places: the address of the include
 (`.../wingbox-action/<commit>/gitlab/...`) and `WINGBOX_ACTION_REF: "<commit>"`.
@@ -375,6 +467,9 @@ then writes no comment, warns, and keeps the report in the job summary.
 - **No language model.** The comment is computed: parsers build the code
   graph and the report is read from it. There is no model call, no API key
   and no prompt, so the same pull request gives the same comment.
+- **No code of the repository is run.** The check reads files and asks git.
+  Every Python it starts gets `-P`, so a folder of the checkout named like a
+  module (`wingbox/`, `pip/`) is not imported. Test reports are read as data.
 - **No code leaves the runner.** The code graph is built and queried on the
   runner. The action makes two kinds of network calls: `pip` installs wingbox
   from PyPI, and the GitHub API reads the comments of the pull request and

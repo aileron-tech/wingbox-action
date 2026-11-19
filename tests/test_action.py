@@ -1,4 +1,5 @@
 """The edges of the action: its metadata, the map copy, and the whole script on the fixture repository."""
+import hashlib
 import http.server
 import importlib.util
 import json
@@ -178,7 +179,9 @@ class FixtureTest(unittest.TestCase):
             self.assertTrue(plan[0].startswith(f"(review-plan :schema 1 :result UNKNOWN :execution ok :base {base} :head {head} "), plan[0])
             self.assertIn('(changed-item "app/services/billing.py" bill :kind fn :line 4 :how changed)', plan)
             self.assertIn('(look "app/api/admin.py" 5 :module app/api/admin :why call :item bill :places 2)', plan)
-            self.assertTrue(any(line.startswith('(changed-file "app/services/billing.py" :sha256 ') and len(line.split()[-1]) == 65 for line in plan), plan)
+            digest = hashlib.sha256(make_fixture.HEAD["app/services/billing.py"].encode()).hexdigest()
+            self.assertIn(f'(changed-file "app/services/billing.py" :sha256 {digest} :commit {head})', plan)
+            self.assertTrue(plan[0].endswith(f" :checked {head} :tree head)"), plan[0])
             self.assertIn("Result of the boundary check: **UNKNOWN** (execution ok). Reasons: not-checked: . (", report)
             self.assertTrue(Path(outputs["map"]).is_file())
             self.assertEqual(temp / "wingbox-map" / "map.html", Path(outputs["map"]))

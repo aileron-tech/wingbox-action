@@ -1,0 +1,55 @@
+# The check, then the hand-over of its evidence record to another system, in two jobs.
+#
+# The first job reads the pull request and holds no secret but the default token. The second job never
+# checks out the code: it takes the record as an artifact and sends it to an HTTP endpoint with a secret
+# that only this job holds. So the secret of the receiving system is never in a job that reads the code
+# of a pull request.
+#
+# Copy to .github/workflows/ and set the repository secrets EVIDENCE_URL (where the record is posted)
+# and EVIDENCE_TOKEN (the bearer token of that endpoint).
+name: Wingbox check with evidence
+on: pull_request
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # Run your tests here and let them write a JUnit XML report, for example:
+      #   - run: python -P -m pytest --junitxml=test-results/junit.xml
+      - uses: aileron-tech/wingbox-action@v1
+        id: wingbox
+        with:
+          fail-on: strict
+          test-results: test-results/*.xml
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && steps.wingbox.outputs.evidence != '' }}
+        with:
+          name: wingbox-evidence
+          path: |
+            ${{ steps.wingbox.outputs.evidence }}
+            ${{ steps.wingbox.outputs.report }}
+            ${{ steps.wingbox.outputs.plan }}
+          retention-days: 90
+
+  hand-over:
+    needs: check
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: wingbox-evidence
+      - name: Send the record
+        shell: bash
+        env:
+          EVIDENCE_URL: ${{ secrets.EVIDENCE_URL }}
+          EVIDENCE_TOKEN: ${{ secrets.EVIDENCE_TOKEN }}
+        run: |
+          curl --fail --silent --show-error --max-time 60 --request POST "$EVIDENCE_URL" --header "Authorization: Bearer $EVIDENCE_TOKEN" --header "Content-Type: application/json" --data-binary @wingbox-evidence.json

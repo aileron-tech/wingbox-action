@@ -7,7 +7,7 @@ branding:
 
 inputs:
   version:
-    description: The wingbox release installed from PyPI.
+    description: The wingbox release installed from PyPI, with the parser of every language.
     default: "0.11.0"
   hops:
     description: How far dependents are followed from each changed file.
@@ -36,6 +36,12 @@ inputs:
   working-directory:
     description: The repository checkout.
     default: "."
+  test-results:
+    description: "Glob patterns of the JUnit XML reports the test step of this job wrote, one per line (** crosses folders). The report then says for each test that uses what changed whether these reports hold a passed, failed or skipped record of it, or none. The check itself never runs a test."
+    default: ""
+  require-tests:
+    description: Fail the job when a test that uses what changed has no passing record in the test results. It does not change the result of the boundary check.
+    default: "false"
   github-token:
     description: Token for the comment (needs pull-requests write).
     default: ${{ github.token }}
@@ -59,6 +65,9 @@ outputs:
   plan:
     description: Path of the review plan (S-expression lines) for a reviewing agent.
     value: ${{ steps.check.outputs.plan }}
+  evidence:
+    description: Path of the evidence record of the run (wingbox-evidence.json, shape in schema/wingbox-evidence-1.schema.json).
+    value: ${{ steps.check.outputs.evidence }}
   result:
     description: "Result of the boundary check: PASS, FAIL, UNKNOWN or NOT_APPLICABLE. A part that was not checked or a tool error is UNKNOWN, never PASS."
     value: ${{ steps.check.outputs.result }}
@@ -71,6 +80,15 @@ outputs:
   tests-to-run:
     description: Number of tests that use what the pull request changes.
     value: ${{ steps.check.outputs.tests-to-run }}
+  tests-passed:
+    description: Number of those tests with a passed record in the test results; empty without test results.
+    value: ${{ steps.check.outputs.tests-passed }}
+  tests-failed:
+    description: Number of those tests with a failed record in the test results; empty without test results.
+    value: ${{ steps.check.outputs.tests-failed }}
+  tests-without-record:
+    description: Number of those tests that were skipped or are not in the test results; empty without test results.
+    value: ${{ steps.check.outputs.tests-without-record }}
 
 runs:
   using: composite
@@ -82,7 +100,7 @@ runs:
         update-environment: false
     - name: Install wingbox
       shell: bash
-      run: '"$WINGBOX_PYTHON" -m pip install --disable-pip-version-check --quiet "wingbox==$WINGBOX_VERSION"'
+      run: '"$WINGBOX_PYTHON" -P -m pip install --disable-pip-version-check --quiet "wingbox[all]==$WINGBOX_VERSION"'
       env:
         WINGBOX_PYTHON: ${{ steps.python.outputs.python-path }}
         WINGBOX_VERSION: ${{ inputs.version }}
@@ -101,6 +119,8 @@ runs:
         WINGBOX_PATHS: ${{ inputs.paths }}
         WINGBOX_BASE: ${{ inputs.base }}
         WINGBOX_HEAD: ${{ inputs.head }}
+        WINGBOX_TEST_RESULTS: ${{ inputs.test-results }}
+        WINGBOX_REQUIRE_TESTS: ${{ inputs.require-tests }}
         WINGBOX_TOKEN: ${{ inputs.github-token }}
     - name: Upload the map
       if: ${{ !cancelled() && inputs.upload-map == 'true' && steps.check.outputs.map != '' }}

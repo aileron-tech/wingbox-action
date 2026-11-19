@@ -17,7 +17,8 @@ from typing import Optional
 
 import wingbox_changes as changes
 import wingbox_diagram as diagram
-from wingbox_facts import BLOCKING_HEADS, MARKER, WORKING_TREE, ChangedFile, ChangedItem, Dependent, Report, User, folder_of
+import wingbox_tests
+from wingbox_facts import BLOCKING_HEADS, MARKER, WORKING_TREE, ChangedFile, ChangedItem, Dependent, Report, Tree, User, folder_of
 
 FAIL_ON = ("none", "violations", "not-checked", "strict")
 LIST_LIMIT = 10    # direct dependents and findings named in the comment; the job summary names them all
@@ -122,25 +123,43 @@ def untouched_count(report: Report) -> int:
 
 def needs_comment(report: Report) -> bool:
     """A pull request that changes no source module of the graph other than tests gets no comment, unless a
-    wingbox command failed: then the comment says the change could not be checked."""
+    wingbox command failed or a language was left out: then the comment says what could not be checked."""
     return (any(c.module is not None and not is_test(c.path) for c in report.changed) or bool(report.introduced)
-            or bool(report.tool_errors))
+            or bool(report.tool_errors) or bool(report.skipped_languages) or bool(_tree_reasons(report)))
+
+
+def _tree_reasons(report: Report) -> tuple[str, ...]:
+    """Why the files analysed are not the commit the report names; empty when they are (the head, or its merge
+    into the base, with no file changed since)."""
+    tree = report.tree
+    if tree is None or tree.relation == WORKING_TREE:
+        return ()
+    reasons = []
+    if tree.relation == "other":
+        reasons.append(f"tree-not-at-head: checked {tree.commit[:12]}, named {report.head[:12]}")
+    if tree.differs:
+        reasons.append(f"tree-differs-from-commit: {len(tree.differs)} file(s)")
+    return tuple(reasons)
 
 
 def result(report: Report) -> tuple[str, str, tuple[str, ...]]:
     """(result, execution status, reasons) of the boundary check of a pull request.
 
     The result never reads what was not checked as a pass. FAIL: the pull request introduces a blocking
-    finding. UNKNOWN: a wingbox command ended abnormally (execution "error"), or a part of the repository was
-    not checked. NOT_APPLICABLE: no source module outside the tests changed. PASS: none of these."""
+    finding. UNKNOWN: a wingbox command ended abnormally (execution "error"), files of a language were left out of
+    the graph (its parser is not installed), or a part of the repository was not checked. NOT_APPLICABLE: no source module outside the tests changed. PASS: none of these."""
     execution = "error" if report.tool_errors else "ok"
     errors = tuple(f"tool-error: {error}" for error in report.tool_errors)
     unchecked = tuple(f"not-checked: {part.part} ({part.reason})" for part in report.not_checked)
+    left_out = tuple(f"skipped-language: {name} ({files} files)" for name, files in report.skipped_languages)
     blocking = sum(1 for finding in report.introduced if finding.head in BLOCKING_HEADS)
+    tree = _tree_reasons(report)
     if blocking:
-        return "FAIL", execution, (f"introduced-violations: {blocking}", *errors)
-    if errors:
-        return "UNKNOWN", execution, (*errors, *unchecked)
+        return "FAIL", execution, (f"introduced-violations: {blocking}", *errors, *left_out, *tree)
+    if errors or left_out or tree:
+        # Before "no source module changed": the changed files may be of the language that was left out, and a
+        # report about another tree than the one named says nothing about the one named.
+        return "UNKNOWN", execution, (*errors, *left_out, *tree, *unchecked)
     if not needs_comment(report):
         return "NOT_APPLICABLE", execution, ("no-source-module-changed",)
     if unchecked:
@@ -318,6 +337,66 @@ def tests_to_run(report: Report) -> list[TestToRun]:
     return sorted(found.values(), key=lambda test: test.shown)
 
 
+def test_evidence(report: Report) -> Optional[tuple[wingbox_tests.Evidence, ...]]:
+    """What the test reports given to the check hold about each test to run; None when none was given."""
+    if report.test_cases is None:
+        return None
+    return wingbox_tests.evidence([test.shown for test in tests_to_run(report)], list(report.test_cases))
+
+
+def evidence_counts(report: Report) -> tuple[str, str, str]:
+    """(tests to run with a passed record, with a failed one, without a passing record: skipped or no record),
+    as the text of the outputs; three empty texts when no test report was given."""
+    found = test_evidence(report)
+    if found is None:
+        return "", "", ""
+    passed = sum(1 for item in found if item.status == wingbox_tests.PASSED)
+    failed = sum(1 for item in found if item.status == wingbox_tests.FAILED)
+    return str(passed), str(failed), str(len(found) - passed - failed)
+
+
+def tests_status(report: Report, require: bool) -> int:
+    """1 when a passing record is required for every test to run and one has none (no test report was given,
+    or the test failed, was skipped or is not in the reports); else 0."""
+    if not require or not tests_to_run(report):
+        return 0
+    found = test_evidence(report)
+    return 0 if found is not None and all(item.status == wingbox_tests.PASSED for item in found) else 1
+
+
+def outputs(report: Report) -> dict[str, str]:
+    """The outputs of a run that are read from the report alone, by their names."""
+    outcome, execution, reasons = result(report)
+    passed, failed, without = evidence_counts(report)
+    return {"result": outcome, "execution": execution, "reasons": "; ".join(reasons),
+            "untouched-dependents": str(untouched_count(report)), "introduced-findings": str(len(report.introduced)),
+            "not-checked-parts": str(len(report.not_checked)), "tests-to-run": str(len(tests_to_run(report))),
+            "tests-passed": passed, "tests-failed": failed, "tests-without-record": without}
+
+
+def _evidence_words(recorded: tuple[wingbox_tests.Evidence, ...], full: bool) -> str:
+    """How the tests to run ended by the test reports: the passed counted, the others counted and named."""
+    def named(status: str) -> list[str]:
+        return [item.test for item in recorded if item.status == status]
+
+    def listed(names: list[str]) -> str:
+        shown = names if full else names[:TESTS_LIMIT]
+        return ", ".join(_code(name) for name in shown) + (f" and {len(names) - len(shown)} more" if len(names) > len(shown) else "")
+
+    said = []
+    passed, failed, skipped, none = (named(status) for status in (wingbox_tests.PASSED, wingbox_tests.FAILED, wingbox_tests.SKIPPED,
+                                                                  wingbox_tests.NO_RECORD))
+    if passed:
+        said.append(f"{len(passed)} passed")
+    if failed:
+        said.append(f"{len(failed)} FAILED ({listed(failed)})")
+    if skipped:
+        said.append(f"{len(skipped)} skipped ({listed(skipped)})")
+    if none:
+        said.append(f"{len(none)} without a record in the test report ({listed(none)})")
+    return ", ".join(said)
+
+
 def _whole_files(report: Report) -> set[str]:
     """The changed files spoken of as a whole: not looked at, or with code outside every item changed."""
     return {changed.path for changed in report.changed if changed.module is not None and (changed.items is None or changed.other_code)}
@@ -362,7 +441,7 @@ def build_plan(report: Report) -> str:
     every `look` line is a place to open, every `run-test` line a test to run."""
     outcome, execution, reasons = result(report)
     lines = [f"(review-plan :schema {PLAN_SCHEMA} :result {outcome} :execution {execution} :base {report.base} :head {report.head} "
-             f":wingbox {_q(report.version)} :hops {report.hops})"]
+             f":wingbox {_q(report.version)} :hops {report.hops}{_tree_keys(report.tree)})"]
     lines += [f"(reason {_q(reason)})" for reason in reasons]
     lines += [f"(finding {finding.head} {_q(finding.text)})" for finding in report.introduced]
     named = changed_items(report)
@@ -379,13 +458,35 @@ def build_plan(report: Report) -> str:
         elif changed.other_code:
             lines.append(f"(other-code {_q(changed.path)})")
     lines += [f"(look-module {_atom(use.module)} :why uses :file {_q(path)})" for use in direct for path in use.files]
-    lines += [f"(run-test {_q(test.shown)} :uses {_atom(test.uses) if test.by_item else _q(test.uses)})" for test in tests_to_run(report)]
+    recorded = {item.test: item for item in test_evidence(report) or ()}
+    for test in tests_to_run(report):
+        known = recorded.get(test.shown)
+        proof = "none" if report.test_cases is None or known is None else f"{known.status} :cases {known.cases}"
+        lines.append(f"(run-test {_q(test.shown)} :uses {_atom(test.uses) if test.by_item else _q(test.uses)} :evidence {proof})")
+    lines += [f"(test-report {_q(read.path)} :sha256 {read.sha256} :cases {read.cases})" for read in report.test_reports]
+    lines += [f"(test-report-error {_q(path)} :reason {_q(reason)})" for path, reason in report.test_report_errors]
     lines += [f"(test-changed {_q(test)} :tests {_q(source)})" for test, source in report.tests_changed]
     lines += [f"(not-checked {_q(part.part)} :reason {_atom(part.reason)})" for part in report.not_checked]
+    lines += [f"(skipped-language {_atom(name)} :files {files})" for name, files in report.skipped_languages]
     if report.checked_modules is not None:
         lines.append(f"(checked :modules {report.checked_modules})")
-    lines += [f"(changed-file {_q(path)} :sha256 {digest})" for path, digest in report.hashes]
+    commit = f" :commit {report.tree.commit}" if report.tree is not None and report.tree.commit else ""
+    lines += [f"(changed-file {_q(path)} :sha256 {digest}{commit})" for path, digest in report.hashes]
+    if report.tree is not None:
+        lines += [f"(tree-differs {_q(path)})" for path in report.tree.differs[:DIFFERS_LIMIT]]
+        if len(report.tree.differs) > DIFFERS_LIMIT:
+            lines.append(f"(tree-differs-more :hidden {len(report.tree.differs) - DIFFERS_LIMIT})")
     return "\n".join(lines)
+
+
+DIFFERS_LIMIT = 50   # differing files named in the plan; the reason of the result holds the count of them all
+
+
+def _tree_keys(tree: Optional[Tree]) -> str:
+    """The keys of the plan's head line that say which files were analysed."""
+    if tree is None:
+        return ""
+    return f" :tree {tree.relation}" if not tree.commit else f" :checked {tree.commit} :tree {tree.relation}"
 
 
 _PLAN_WORK = ("(finding ", "(look ", "(look-module ", "(run-test ", "(test-changed ")
@@ -407,6 +508,9 @@ def build_comment(report: Report, full: bool = False) -> str:
     changes only documents, configuration or tests gets one line."""
     head = ("head: the working directory (uncommitted and untracked files included)" if report.head == WORKING_TREE
             else f"head {_code(report.head[:7])}")
+    tree = report.tree
+    if tree is not None and tree.relation == "merge":
+        head += f", checked as merged into the base (commit {_code(tree.commit[:7])})"
     footer = (f"<sub>[Wingbox]({SITE}) {report.version}, base {_code(report.base[:7])}, {head}. "
               "Built and checked on the runner, without a language model; no code left it.</sub>")
     if not needs_comment(report):
@@ -418,10 +522,33 @@ def build_comment(report: Report, full: bool = False) -> str:
         problem = (f"**Wingbox** could not check this change{'' if _build_failed(report) else ' completely'}: "
                    f"{', '.join(_code(error) for error in report.tool_errors)}. "
                    "The result is UNKNOWN, not a pass; the job log has the tool's message.")
-        nothing_else = not any(c.module is not None and not is_test(c.path) for c in report.changed) and not report.introduced
-        if _build_failed(report) or nothing_else:
-            # Without a graph the usual report would be made of empty answers: say only that it was not checked.
-            return "\n".join([MARKER, problem, "", footer, ""])
+    nothing_else = not any(c.module is not None and not is_test(c.path) for c in report.changed) and not report.introduced
+    if report.skipped_languages:
+        # Files left out of the graph have no users and no findings in it: that must not read as "nothing uses this".
+        counts = [f"{files:,} {_LANGUAGES.get(name, name)} file{'' if files == 1 else 's'}" for name, files in report.skipped_languages]
+        listed = counts[0] if len(counts) == 1 else f"{', '.join(counts[:-1])} and {counts[-1]}"
+        one = len(counts) == 1 and report.skipped_languages[0][1] == 1
+        left_out = (f"**Not analysed**: {listed} {'was' if one else 'were'} not analysed, because the parser of that language "
+                    "is not installed in this run (install `wingbox[all]`). What uses them, and what they use, is not in "
+                    "this report. The result is UNKNOWN, not a pass.")
+        problem = f"{problem}\n\n{left_out}" if problem else left_out
+    if _tree_reasons(report) and tree is not None:
+        said_tree = []
+        if tree.relation == "other":
+            said_tree.append(f"The files checked are commit {_code(tree.commit[:7])}, not the head named ({_code(report.head[:7])}).")
+        if tree.differs:
+            shown = ", ".join(_code(path) for path in tree.differs[:3])
+            more = f" and {len(tree.differs) - 3} more" if len(tree.differs) > 3 else ""
+            count = f"{len(tree.differs):,} file{'' if len(tree.differs) == 1 else 's'}"
+            said_tree.append(f"{count} of the working folder {'is' if len(tree.differs) == 1 else 'are'} not as in commit "
+                             f"{_code(tree.commit[:7])} ({shown}{more}).")
+        other_tree = (f"**Wingbox** did not check the commit this report names. {' '.join(said_tree)} "
+                      "The result is UNKNOWN, not a pass.")
+        problem = f"{problem}\n\n{other_tree}" if problem else other_tree
+    if problem and (_build_failed(report) or nothing_else):
+        # Without a graph, or without a changed module in it, the usual report would be made of empty answers:
+        # say only what was not checked.
+        return "\n".join([MARKER, problem, "", footer, ""])
     found = uses(report)
     # A file whose changed lines were sorted into items speaks through those items; a file that was not looked
     # at, or in which code outside every item changed too, is spoken of as a whole.
@@ -499,7 +626,14 @@ def build_comment(report: Report, full: bool = False) -> str:
     if to_run:
         shown_tests = to_run if full else to_run[:TESTS_LIMIT]
         rest = f" and {len(to_run) - len(shown_tests)} more (the job summary lists them all)" if len(to_run) > len(shown_tests) else ""
-        lines += [f"Tests that use what changed ({len(to_run)}): " + ", ".join(_code(test.shown) for test in shown_tests) + rest + ".", ""]
+        recorded = test_evidence(report)
+        if recorded is None:
+            lines += [f"Tests that use what changed ({len(to_run)}): " + ", ".join(_code(test.shown) for test in shown_tests) + rest + ".", ""]
+        else:
+            lines += [f"Tests that use what changed ({len(to_run)}): " + _evidence_words(recorded, full) + ".", ""]
+            if report.test_report_errors:
+                lines += ["Test reports that gave no cases: " + "; ".join(f"{_code(path)} ({reason})" for path, reason in report.test_report_errors)
+                          + ".", ""]
     if report.tests_changed:
         pairs = sorted(report.tests_changed) if full else sorted(report.tests_changed)[:LIST_LIMIT]
         rest = f"; {len(report.tests_changed) - len(pairs)} more" if len(report.tests_changed) > len(pairs) else ""
@@ -564,6 +698,7 @@ def build_comment(report: Report, full: bool = False) -> str:
     return "\n".join(lines)
 
 
+_LANGUAGES = {"csharp": "C#", "java": "Java", "go": "Go", "ruby": "Ruby", "php": "PHP", "dart": "Dart"}
 _REASONS = {
     "declared-rules-not-read": "its declared rules could not be read",
     "style-undetermined": "its architecture style could not be determined",

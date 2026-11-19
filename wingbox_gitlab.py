@@ -140,6 +140,23 @@ def dotenv(values: Mapping[str, str]) -> str:
     return "".join(line + "\n" for line in lines)
 
 
+def gitlab_run(env: Mapping[str, str]) -> "pr.wingbox_evidence.Run":
+    """The job as GitLab CI names it; outside a pipeline a local run."""
+    if not env.get("CI_JOB_ID"):
+        return pr.wingbox_evidence.Run("local", "", "", "", "", env.get("WINGBOX_ACTION_REF", ""), pr.now())
+    return pr.wingbox_evidence.Run("gitlab", env.get("CI_PROJECT_PATH", ""), env.get("CI_MERGE_REQUEST_IID", ""), env.get("CI_JOB_ID", ""),
+                                   env.get("CI_JOB_URL", ""), env.get("WINGBOX_ACTION_REF", ""), pr.now())
+
+
+def _inside(root: str, out: Path) -> tuple[str, ...]:
+    """The output folder as a path inside the repository, when it lies there: what this run writes there is
+    not a difference between the working folder and its commit."""
+    try:
+        return (out.resolve().relative_to(Path(root).resolve()).as_posix(),)
+    except ValueError:
+        return ()
+
+
 def main() -> int:
     env = with_keys(sys.argv[1:], os.environ)
     root = os.path.abspath(env.get("WINGBOX_ROOT") or os.getcwd())
@@ -160,19 +177,20 @@ def main() -> int:
         print(f'ERROR: the base commit {chosen.base[:12]} is not in the checkout: set GIT_DEPTH: "0" for this job')
         return 2
     patterns = [p.strip() for p in env.get("WINGBOX_PATHS", "").splitlines() if p.strip()]
-    report = pr.collect(root, chosen.base, chosen.head, int(env.get("WINGBOX_HOPS", "2")), patterns, env.get("WINGBOX_VERSION", "?"))
+    report = pr.collect(root, chosen.base, chosen.head, int(env.get("WINGBOX_HOPS", "2")), patterns, env.get("WINGBOX_VERSION", "?"),
+                        ignore=_inside(root, out))
+    report = pr.with_test_results(report, env, root)
     comment = in_gitlab_words(pr.cut(pr.build_comment(report), pr.COMMENT_LIMIT))
-    outcome, execution, reasons = pr.result(report)
-    (out / "wingbox-report.md").write_text(in_gitlab_words(pr.cut(pr.build_comment(report, full=True), pr.SUMMARY_LIMIT)),
-                                           encoding="utf-8", newline="\n")
-    (out / "wingbox-plan.sexp").write_text(pr.build_plan(report) + "\n", encoding="utf-8", newline="\n")
-    (out / "wingbox.env").write_text(dotenv({
-        "result": outcome, "execution": execution, "reasons": "; ".join(reasons),
-        "untouched-dependents": str(pr.untouched_count(report)), "introduced-findings": str(len(report.introduced)),
-        "not-checked-parts": str(len(report.not_checked)), "tests-to-run": str(len(pr.tests_to_run(report)))}),
-        encoding="utf-8", newline="\n")
+    values = pr.outputs(report)
+    outcome, execution, reasons = values["result"], values["execution"], values["reasons"]
+    summary = in_gitlab_words(pr.cut(pr.build_comment(report, full=True), pr.SUMMARY_LIMIT))
+    plan = pr.build_plan(report) + "\n"
+    (out / "wingbox-report.md").write_text(summary, encoding="utf-8", newline="\n")
+    (out / "wingbox-plan.sexp").write_text(plan, encoding="utf-8", newline="\n")
+    (out / "wingbox.env").write_text(dotenv(values), encoding="utf-8", newline="\n")
+    pr.write_evidence(report, gitlab_run(env), str(out), {"wingbox-report.md": summary, "wingbox-plan.sexp": plan})
     print(comment)
-    print(f"Result of the boundary check: {outcome} (execution {execution})" + (f": {'; '.join(reasons)}" if reasons else ""))
+    print(f"Result of the boundary check: {outcome} (execution {execution})" + (f": {reasons}" if reasons else ""))
     merge_request = env.get("CI_MERGE_REQUEST_IID", "")
     if merge_request and env.get("WINGBOX_COMMENT", "true") == "true":
         token = env.get(TOKEN_VARIABLE, "")
@@ -183,7 +201,7 @@ def main() -> int:
                 print(post_note(comment, env["CI_API_V4_URL"], env["CI_PROJECT_ID"], merge_request, api_call(token), pr.needs_comment(report)))
             except (urllib.error.URLError, KeyError, ValueError) as error:
                 print(f"WARNING: could not write the merge request note ({error}); the report is in the job log and in {out}")
-    return pr.exit_status(report, fail_on)
+    return max(pr.exit_status(report, fail_on), pr.tests_failed(report, env))
 
 
 if __name__ == "__main__":
