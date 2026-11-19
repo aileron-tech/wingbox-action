@@ -787,9 +787,32 @@ def write_package(env: Any, folder: str, root: str, named: Mapping[str, str], sa
     return target, "complete" if status == 0 else "incomplete", status
 
 
-def _package_outputs(path: str, state: str) -> str:
-    """The outputs `package` and `package-state` as lines of GITHUB_OUTPUT; nothing when no package was asked for."""
-    return f"package={path}\npackage-state={state}\n" if state else ""
+def write_ledger(env: Any, folder: str, package_path: str, root: str, say: Callable[[str], None] = print) -> tuple[str, int]:
+    """With WINGBOX_LEDGER naming a file, the line of the run whose record is in folder, added at the end of
+    that ledger: from the package of the run when one was written, else from the record. (The SHA-256 of the
+    last line of the ledger, the exit status it gives the run: 1 when the ledger does not verify and nothing
+    was added.) A path that is not absolute starts at the workspace of the job (GITHUB_WORKSPACE,
+    CI_PROJECT_DIR), else at root. Otherwise ("", 0), and nothing is written or said."""
+    target = env.get("WINGBOX_LEDGER", "").strip()
+    if not target:
+        return "", 0
+    path = target if os.path.isabs(target) else os.path.join(env.get("GITHUB_WORKSPACE") or env.get("CI_PROJECT_DIR") or root, target)
+    try:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        status, lines, head = wingbox_evidence_cli.append_run(path, "" if package_path else os.path.join(folder, wingbox_evidence.FILE_NAME),
+                                                              package_path)
+    except (wingbox_evidence_cli.Usage, OSError) as error:
+        say(f"Wingbox: no ledger line: {error}")
+        return "", 1
+    for line in lines:
+        say(line)
+    return head, status
+
+
+def _package_outputs(path: str, state: str, head: str = "") -> str:
+    """The outputs `package`, `package-state` and `ledger-head` as lines of GITHUB_OUTPUT; nothing for what was
+    not asked for."""
+    return (f"package={path}\npackage-state={state}\n" if state else "") + (f"ledger-head={head}\n" if head else "")
 
 
 def _append(path: str, text: str) -> None:
@@ -820,18 +843,19 @@ NOT_RUN_KEY = "--did-not-run"
 
 def did_not_run(args: list[str], env: Any, pull: dict[str, Any]) -> int:
     """Write the record of a check that did not run, and its outputs; 0, or 1 when an evidence package was asked
-    for and is incomplete. The last step of the action calls this when the check step left no record, so that a
+    for and is incomplete or a ledger was named and does not verify. The last step of the action calls this when the check step left no record, so that a
     job that hands records over always has one."""
     root, base, head, temp = settings(args, env, pull)
     os.makedirs(temp, exist_ok=True)
     report = not_run_report(base, "" if head == "HEAD" and not env.get("WINGBOX_HEAD") else head, env)
     path = write_evidence(report, github_run(env, str(pull.get("number") or "")), temp, {})
     package_path, package_state, package_status = write_package(env, temp, root, wingbox_policy.named(env))
+    ledger_head, ledger_status = write_ledger(env, temp, package_path, root)
     if env.get("GITHUB_OUTPUT"):
         _append(env["GITHUB_OUTPUT"], f"evidence={path}\n" + "".join(f"{name}={value}\n" for name, value in outputs(report).items())
-                + _package_outputs(package_path, package_state))
+                + _package_outputs(package_path, package_state, ledger_head))
     print(f"Wingbox: the check did not run; the record that says so is {path}")
-    return package_status
+    return max(package_status, ledger_status)
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -891,12 +915,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     evidence_path = write_evidence(report, github_run(env, str(pull.get("number") or "")), temp,
                                    {"wingbox-report.md": summary, "wingbox-plan.sexp": plan})
     package_path, package_state, package_status = write_package(env, temp, root, wingbox_policy.named(env))
+    ledger_head, ledger_status = write_ledger(env, temp, package_path, root)
     values = outputs(report)
     outcome, execution, reasons = values["result"], values["execution"], values["reasons"]
     if env.get("GITHUB_OUTPUT"):
         _append(env["GITHUB_OUTPUT"], f"report={report_path}\nmap={map_path}\nplan={plan_path}\nevidence={evidence_path}\n"
                                       + "".join(f"{name}={value}\n" for name, value in values.items())
-                                      + _package_outputs(package_path, package_state))
+                                      + _package_outputs(package_path, package_state, ledger_head))
     print(comment)
     print(f"Result of the boundary check: {outcome} (execution {execution})" + (f": {reasons}" if reasons else ""))
     if env.get("WINGBOX_COMMENT", "true") == "true" and pull.get("number"):
@@ -906,7 +931,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         except (urllib.error.URLError, KeyError, ValueError) as error:
             # A pull request from a fork gets a read-only token: the summary still holds the report.
             print(f"::warning::could not write the pull request comment ({error}); the report is in the job summary")
-    return max(fail_on_status(report, fail_on), tests_failed(report, env), policy_failed(report), package_status)
+    return max(fail_on_status(report, fail_on), tests_failed(report, env), policy_failed(report), package_status, ledger_status)
 
 
 if __name__ == "__main__":

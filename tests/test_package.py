@@ -795,7 +795,7 @@ class CommandTest(unittest.TestCase):
         self.assertIn("usage: wingbox-evidence verify", usage.stderr)
 
     def test_nothing_is_run_and_nothing_leaves_the_machine(self) -> None:
-        """/* REQ-ACTION-187: wingbox_package.py imports only hashlib, json, re, struct, zlib, dataclasses and typing, and no module of this repository; wingbox_evidence_cli.py adds argparse, datetime, os, subprocess, sys, pathlib and wingbox_package: no network, no archive library that unpacks, no model; the only program the command starts is git, with the words `cat-file`; neither file calls exec, eval, compile, __import__ or os.system */"""
+        """/* REQ-ACTION-187: wingbox_package.py imports only hashlib, json, re, struct, zlib, dataclasses and typing, and no module of this repository; wingbox_evidence_cli.py adds argparse, datetime, os, subprocess, sys, pathlib, wingbox_package and wingbox_ledger: no network, no archive library that unpacks, no model; the only program the command starts is git, with the words `cat-file` (and `rev-list` for the commits of a branch, REQ-ACTION-205); neither file calls exec, eval, compile, __import__ or os.system */"""
         def imported(path: Path) -> set:
             names = set()
             for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
@@ -806,8 +806,8 @@ class CommandTest(unittest.TestCase):
             return names
         pure = {"__future__", "hashlib", "json", "re", "struct", "zlib", "dataclasses", "typing"}
         self.assertEqual(pure, imported(ROOT / "wingbox_package.py"))
-        self.assertEqual(pure - {"hashlib", "struct", "zlib", "dataclasses"} | {"argparse", "datetime", "os", "subprocess", "sys", "pathlib", "wingbox_package"},
-                         imported(ROOT / "wingbox_evidence_cli.py"))
+        self.assertEqual(pure - {"hashlib", "struct", "zlib", "dataclasses"} | {"argparse", "datetime", "os", "subprocess", "sys", "pathlib", "wingbox_package",
+                                                                                 "wingbox_ledger"}, imported(ROOT / "wingbox_evidence_cli.py"))
         for name in ("wingbox_package.py", "wingbox_evidence_cli.py"):
             tree = ast.parse((ROOT / name).read_text(encoding="utf-8"))
             called = {node.func.id for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
@@ -821,7 +821,7 @@ class CommandTest(unittest.TestCase):
         self.assertEqual("git", started[0].args[0].elts[0].value)
         text = (ROOT / "wingbox_evidence_cli.py").read_text(encoding="utf-8")
         self.assertEqual(2, text.count('_git(repo, "cat-file", '))
-        self.assertEqual(3, text.count("_git("))
+        self.assertEqual(3, text.count("_git(") - text.count('_git(repo, "rev-list", '))
 
 
 class ActionTest(unittest.TestCase):

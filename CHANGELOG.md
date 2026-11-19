@@ -23,6 +23,21 @@
   compression in a fixed order with a fixed date.
 - New schemas `schema/wingbox-package-1.schema.json` (the manifest) and
   `schema/wingbox-review-1.schema.json` (a review).
+- Evidence over a period. A ledger is a text file with one line per run
+  (key, time, commits, verdicts, policy changes, accepted breaks, the SHA-256
+  of the record and of the manifest of its package), each line holding the
+  SHA-256 of the line before, so a removed or changed line is detected.
+  `python wingbox_evidence_cli.py append` adds the line of a run; the input
+  `ledger` (output `ledger-head`; in GitLab `WINGBOX_LEDGER`,
+  `WINGBOX_LEDGER_HEAD`) does it in a job.
+- `python wingbox_evidence_cli.py period --from DATE --to DATE` reads a
+  ledger and reports the runs by verdict, every failed and unknown run with
+  what followed it, every change of a policy file, the accepted breaks, and
+  the gaps: with `--repo` the commits of the default branch that have no
+  record, with `--max-gap-hours` the stretches without a run. It states
+  counts; it does not conclude that a control operated effectively.
+- New schemas `schema/wingbox-ledger-1.schema.json` (a ledger line) and
+  `schema/wingbox-period-1.schema.json` (the report of `period --json`).
 
 ## 1.5.0 - 2026-11-19
 

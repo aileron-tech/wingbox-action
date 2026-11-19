@@ -1,0 +1,180 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/aileron-tech/wingbox-action/blob/main/schema/wingbox-period-1.schema.json",
+  "title": "Wingbox evidence over a period, version 1",
+  "description": "What `period --json` prints: a count of what a ledger recorded in a period, for a reviewer. It does not conclude that a control operated effectively.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "statement", "period", "ledger", "runs", "not-eligible", "policy-changes", "accepted-breaks", "gaps", "defects", "ok"],
+  "properties": {
+    "schema": {"type": "string", "enum": ["wingbox-period/1"]},
+    "statement": {"type": "string"},
+    "period": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "to"],
+      "properties": {"from": {"type": "string"}, "to": {"type": "string", "description": "Not included."}}
+    },
+    "ledger": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lines", "intact", "head", "problems"],
+      "properties": {
+        "lines": {"type": "integer"},
+        "intact": {"type": "boolean"},
+        "head": {"type": "string", "description": "The SHA-256 of the last line."},
+        "problems": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["where", "detail"],
+            "properties": {"where": {"type": "string"}, "detail": {"type": "string"}}
+          }
+        }
+      }
+    },
+    "runs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "eligible", "failed", "unknown", "by-verdict", "packages"],
+      "properties": {
+        "total": {"type": "integer"},
+        "eligible": {"type": "integer"},
+        "failed": {"type": "integer"},
+        "unknown": {"type": "integer"},
+        "by-verdict": {"type": "object", "description": "Per verdict (boundaries, existing, baseline, tests, coverage, execution) the number of runs by word."},
+        "packages": {"type": "object", "description": "The number of runs by the state of their package: complete, incomplete, none."}
+      }
+    },
+    "not-eligible": {
+      "type": "array",
+      "description": "Every run of the period whose record is not eligible, failed or unknown, with what followed it.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "time", "commit", "change", "outcome", "reasons", "followed-by"],
+        "properties": {
+          "key": {"type": "string"},
+          "time": {"type": "string"},
+          "commit": {"type": "string"},
+          "change": {"type": "string"},
+          "outcome": {"type": "string", "enum": ["failed", "unknown"]},
+          "reasons": {"type": "array", "items": {"type": "string"}},
+          "followed-by": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["key", "time", "commit"],
+            "description": "The first later eligible run on the same change; empty values when there is none.",
+            "properties": {"key": {"type": "string"}, "time": {"type": "string"}, "commit": {"type": "string"}}
+          }
+        }
+      }
+    },
+    "policy-changes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "time", "commit", "change", "files"],
+        "properties": {
+          "key": {"type": "string"},
+          "time": {"type": "string"},
+          "commit": {"type": "string"},
+          "change": {"type": "string"},
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "kind", "change"],
+              "properties": {"path": {"type": "string"}, "kind": {"type": "string"}, "change": {"type": "string"}}
+            }
+          }
+        }
+      }
+    },
+    "accepted-breaks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["breaks", "not-listed"],
+      "properties": {
+        "breaks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["finding", "text", "owner", "expires", "runs", "expired-in", "first", "last"],
+            "properties": {
+              "finding": {"type": "string"},
+              "text": {"type": "string"},
+              "owner": {"type": "string"},
+              "expires": {"type": "string"},
+              "runs": {"type": "integer"},
+              "expired-in": {"type": "integer", "description": "The number of those runs in which the entry was past its end date."},
+              "first": {"type": "string"},
+              "last": {"type": "string"}
+            }
+          }
+        },
+        "not-listed": {"type": "integer", "description": "How many more breaks a run holds than its record lists."}
+      }
+    },
+    "gaps": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commits", "stretches"],
+      "properties": {
+        "commits": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["compared", "branch", "in-period", "with-record", "through-merged-head", "without-record"],
+          "properties": {
+            "compared": {"type": "boolean"},
+            "branch": {"type": "string"},
+            "in-period": {"type": "integer"},
+            "with-record": {"type": "integer"},
+            "through-merged-head": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["commit", "time"],
+                "properties": {"commit": {"type": "string"}, "time": {"type": "string"}}
+              }
+            },
+            "without-record": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["commit", "time"],
+                "properties": {"commit": {"type": "string"}, "time": {"type": "string"}}
+              }
+            }
+          }
+        },
+        "stretches": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["checked", "limit-hours", "longer"],
+          "properties": {
+            "checked": {"type": "boolean"},
+            "limit-hours": {"type": "integer"},
+            "longer": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["from", "to", "hours"],
+                "properties": {"from": {"type": "string"}, "to": {"type": "string"}, "hours": {"type": "integer"}}
+              }
+            }
+          }
+        }
+      }
+    },
+    "defects": {"type": "integer", "description": "The problems of the ledger, the commits without a record and the stretches over the limit, counted."},
+    "ok": {"type": "boolean"}
+  }
+}

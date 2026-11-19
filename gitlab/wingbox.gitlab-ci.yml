@@ -25,6 +25,7 @@ wingbox:
     WINGBOX_TEST_SCRIPT: ""           # the command that runs your tests in this job and writes JUnit XML (see the README)
     WINGBOX_POLICY_CHANGE: ""         # fail or report: a change of the baseline, the rules or this pipeline file; empty: fail with strict
     WINGBOX_PACKAGE: "false"          # true: also write wingbox-out/wingbox-package.zip, the evidence package of the run (see the README)
+    WINGBOX_LEDGER: ""                # a ledger file from the project folder: the run adds its line at the end (see the README)
   script:
     # The tests first, with their status kept: the check runs whatever they say, learns how they ended,
     # and the job ends with the tests' status.

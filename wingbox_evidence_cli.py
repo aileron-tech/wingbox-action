@@ -1,26 +1,33 @@
 #!/usr/bin/env python3
-"""wingbox-evidence: build, check and review the evidence package of a run.
+"""wingbox-evidence: build, check and review the evidence package of a run, and keep the runs of a period.
 
     python wingbox_evidence_cli.py pack --run-dir DIR --out FILE [--repo DIR] [--reports-root DIR] [--job-log FILE]
                                         [--policy PATH]... [--workflow PATH]... [--stated NAME=VALUE]... [--retention TEXT]
     python wingbox_evidence_cli.py verify FILE [--repo DIR] [--manifest-sha256 HEX] [--json]
     python wingbox_evidence_cli.py review FILE --reviewer NAME --decision accepted|rejected --grounds TEXT [--time UTC]
+    python wingbox_evidence_cli.py append --ledger FILE (--record FILE | --package FILE)
+    python wingbox_evidence_cli.py period --ledger FILE --from DATE --to DATE [--repo DIR [--branch NAME]]
+                                          [--max-gap-hours N] [--head-sha256 HEX] [--json]
 
 `pack` gathers what a run left in DIR (wingbox-evidence.json and the report and plan it names), the test
 reports the record names as they are on disk, the job log when one is given, the policy files as the commit
 checked holds them (read from git, never from the working folder) and the schemas, and writes one archive
 with `manifest.json`. `verify` checks an archive against itself, and with --repo against the repository.
-`review` adds the decision of a person as a new member; no earlier byte changes.
+`review` adds the decision of a person as a new member; no earlier byte changes. `append` adds the line of
+a run at the end of a ledger; no earlier byte changes. `period` reads a ledger and counts what it recorded
+between two dates, with the gaps: with --repo the commits of a branch that no line names, with
+--max-gap-hours the stretches without a run.
 
 Exit status: 0 the command did its work and the result is good (a complete package, a package that
-verifies, a review recorded); 1 the command did its work and found a defect (an incomplete package, a member
-that does not verify, a package that is not reviewed because it does not verify); 2 wrong usage (an
-option, a file that is not there, a file that would be written over). The last line of the output says
-which of the first two it is.
+verifies, a review recorded, a line recorded, a period without a gap); 1 the command did its work and found
+a defect (an incomplete package, a member that does not verify, a package or a ledger that does not verify,
+a gap in the period); 2 wrong usage (an option, a file that is not there, a file that would be written
+over). The last line of the output says which of the first two it is.
 
 This file is the I/O: files, git, the clock for a review without --time. The rules are in
-wingbox_package, pure. Nothing of a package or of a repository is run: git is asked for file contents
-(`git cat-file`), and an archive is read in memory, never unpacked. Standard library only, no network.
+wingbox_package and wingbox_ledger, pure. Nothing of a package or of a repository is run: git is asked for
+file contents (`git cat-file`) and for the commits of a branch (`git rev-list`), and an archive is read in
+memory, never unpacked. Standard library only, no network.
 """
 from __future__ import annotations
 
@@ -36,11 +43,13 @@ from typing import Optional, Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))   # the modules next to this file, however it is loaded
 
+import wingbox_ledger as ledger  # noqa: E402
 import wingbox_package as package  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 PROGRAM = "wingbox-evidence"
 PACKAGE_FILE = "wingbox-package.zip"
+LEDGER_SCHEMA_FILE = "wingbox-ledger-1.schema.json"
 _TIME = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\Z")
 _DIGEST = re.compile(r"^[0-9a-fA-F]{64}\Z")
 
@@ -218,6 +227,83 @@ def review_file(path: str, reviewer: str, decision: str, grounds: str, time: str
                f"member: {package.review_name(number)}", f"decision: {decision} by {reviewer} at {time}", "review: recorded"]
 
 
+def ledger_schema() -> dict[str, object]:
+    return json.loads(schema_bytes(LEDGER_SCHEMA_FILE))
+
+
+def _problems(found: Sequence[package.Problem]) -> list[str]:
+    return [f"problem: {problem.code}{' ' + problem.member if problem.member else ''}: {problem.detail}" for problem in found]
+
+
+def append_run(path: str, record_file: str = "", package_file: str = "", limit: int = package.MAX_BYTES) -> tuple[int, list[str], str]:
+    """Add the line of a run at the end of the ledger at path, from its package or from its record alone;
+    (the exit status, the lines that say what was done, the SHA-256 of the last line of the ledger). The file
+    is opened to add to: no earlier byte is written. 1 and nothing added when the ledger or the package does
+    not verify or the record is no record of version 2; 0 and nothing added when the record is in the ledger."""
+    data = _given_file(path, limit, "the ledger") if os.path.lexists(path) else b""
+    book = ledger.read(data, ledger_schema())
+    if book.problems:
+        return 1, [f"ledger: {path}", *_problems(book.problems), "append: not recorded (the ledger does not verify)"], ""
+    own = schemas()
+    packed = None
+    if package_file:
+        archive = _given_file(package_file, limit, "the package")
+        checked = package.verify(archive, own, limit=limit)
+        if not checked.intact or checked.stated is None:
+            return 1, [f"ledger: {path}", *_problems(checked.problems), "append: not recorded (the package does not verify)"], book.head
+        record_bytes = dict(package.read(archive)[0]).get(package.RECORD)
+        packed = {"manifest-sha256": checked.manifest_sha256, "bundle": checked.stated["bundle"], "state": checked.stated["state"]}
+    else:
+        record_bytes = _given_file(record_file, limit, "the record")
+    record = package.read_record(record_bytes, own.record)
+    if record is None or record_bytes is None:
+        return 1, [f"ledger: {path}", f"append: not recorded (not a {package.RECORD_SCHEMA} record)"], book.head
+    digest = package.sha256(record_bytes)
+    already = ledger.recorded(book, digest)
+    if already:
+        return 0, [f"ledger: {path}", f"line: {already}", f"head-sha256: {book.head}", "append: already recorded"], book.head
+    said = ledger.next_line(book, record, digest, packed)
+    new = ledger.encode(said)
+    try:
+        with open(path, "ab") as stream:
+            stream.write(new + b"\n")
+    except OSError as error:
+        raise Usage(f"the ledger {path}: {error.strerror or error}") from None
+    head = package.sha256(new)
+    return 0, [f"ledger: {path}", f"line: {said['sequence']}", f"key: {said['key']}", f"time: {said['time']}", f"package: {said['package']['state']}",
+               f"head-sha256: {head}", "append: recorded"], head
+
+
+def branch_commits(repo: str, branch: str) -> list[ledger.Commit]:
+    """The commits of a branch on its first-parent line, each with its parents and its time, as git lists them."""
+    if branch.startswith("-"):
+        raise Usage(f"--branch {branch} is no branch name")
+    listed = _git(repo, "rev-list", "--first-parent", "--parents", "--timestamp", branch, "--")
+    if listed is None:
+        raise Usage(f"the repository {repo} has no commit named {branch}")
+    found = []
+    for words in (line.split() for line in listed.decode("ascii", errors="replace").splitlines()):
+        if len(words) >= 2 and words[0].isdigit():
+            found.append(ledger.Commit(words[1], tuple(words[2:]), int(words[0])))
+    return found
+
+
+def period_run(path: str, start: str, end: str, repo: Optional[str] = None, branch: str = "HEAD", max_gap_hours: Optional[int] = None,
+               expected_head: str = "", limit: int = package.MAX_BYTES) -> dict[str, object]:
+    """The report of the ledger at path for the period from start to end (wingbox_ledger.period); with repo
+    the ledger is compared with the commits of that branch of the repository."""
+    first, last = ledger.boundary(start), ledger.boundary(end, end=True)
+    if first is None or last is None:
+        raise Usage("--from and --to must be a day as 2026-01-02 or a UTC time as 2026-01-02T03:04:05Z")
+    if first >= last:
+        raise Usage("--from must be before --to")
+    if max_gap_hours is not None and max_gap_hours < 1:
+        raise Usage("--max-gap-hours must be a positive number of hours")
+    book = ledger.read(_given_file(path, limit, "the ledger"), ledger_schema())
+    commits = branch_commits(repo, branch) if repo is not None else None
+    return ledger.period(book, first, last, commits, branch, None if max_gap_hours is None else max_gap_hours * 3600, expected_head)
+
+
 def now() -> str:
     """The UTC time, as a review writes it."""
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -231,9 +317,9 @@ def _pair(text: str) -> tuple[str, str]:
 
 
 def parser() -> argparse.ArgumentParser:
-    top = argparse.ArgumentParser(prog=PROGRAM, description="Build, check and review the evidence package of a run.",
+    top = argparse.ArgumentParser(prog=PROGRAM, description="Build, check and review the evidence package of a run, and keep the runs of a period.",
                                   epilog="Exit status: 0 done and good; 1 done, and a defect was found; 2 wrong usage.")
-    commands = top.add_subparsers(dest="command", required=True, metavar="pack|verify|review")
+    commands = top.add_subparsers(dest="command", required=True, metavar="pack|verify|review|append|period")
     limit = argparse.ArgumentParser(add_help=False)
     limit.add_argument("--max-bytes", type=int, default=package.MAX_BYTES, metavar="N",
                        help=f"the largest archive and the largest member read (default {package.MAX_BYTES})")
@@ -259,6 +345,20 @@ def parser() -> argparse.ArgumentParser:
     review.add_argument("--decision", required=True, choices=package.DECISIONS)
     review.add_argument("--grounds", required=True, metavar="TEXT")
     review.add_argument("--time", default="", metavar="UTC", help="the time of the decision as 2026-01-02T03:04:05Z (default: now)")
+    append = commands.add_parser("append", parents=[limit], help="add the line of a run at the end of a ledger")
+    append.add_argument("--ledger", required=True, metavar="FILE", help="the ledger; it is made when it is not there")
+    source = append.add_mutually_exclusive_group(required=True)
+    source.add_argument("--package", default="", metavar="FILE", help="the package of the run: the line names its manifest")
+    source.add_argument("--record", default="", metavar="FILE", help="wingbox-evidence.json of a run without a package")
+    period = commands.add_parser("period", parents=[limit], help="count what a ledger recorded between two dates, with the gaps")
+    period.add_argument("--ledger", required=True, metavar="FILE")
+    period.add_argument("--from", dest="start", required=True, metavar="DATE", help="the first day (2026-01-02) or moment (2026-01-02T03:04:05Z, UTC)")
+    period.add_argument("--to", dest="end", required=True, metavar="DATE", help="the last day, which belongs to the period, or the moment it ends")
+    period.add_argument("--repo", default=None, metavar="DIR", help="compare with the commits of a branch of this repository")
+    period.add_argument("--branch", default="HEAD", metavar="NAME", help="the default branch as the repository names it (default: HEAD)")
+    period.add_argument("--max-gap-hours", type=int, default=None, metavar="N", help="list every stretch without a run longer than this")
+    period.add_argument("--head-sha256", default="", metavar="HEX", help="the SHA-256 the last line must have, when it was kept elsewhere")
+    period.add_argument("--json", action="store_true", help="print the report as one JSON value")
     return top
 
 
@@ -275,7 +375,15 @@ def run(args: argparse.Namespace) -> tuple[int, list[str]]:
         said = verify_file(args.package, args.repo, args.manifest_sha256, args.max_bytes)
         text = [json.dumps(said, indent=2, ensure_ascii=True)] if args.json else [f"package: {said['package']}", *package.lines(said)]
         return (0 if said["ok"] else 1), text
-    return review_file(args.package, args.reviewer, args.decision, args.grounds, args.time or now(), args.max_bytes)
+    if args.command == "review":
+        return review_file(args.package, args.reviewer, args.decision, args.grounds, args.time or now(), args.max_bytes)
+    if args.command == "append":
+        status, lines, _head = append_run(args.ledger, args.record, args.package, args.max_bytes)
+        return status, lines
+    if args.head_sha256 and not _DIGEST.match(args.head_sha256):
+        raise Usage("--head-sha256 must be 64 hexadecimal digits")
+    report = period_run(args.ledger, args.start, args.end, args.repo, args.branch, args.max_gap_hours, args.head_sha256, args.max_bytes)
+    return (0 if report["ok"] else 1), [json.dumps(report, indent=2, ensure_ascii=True) if args.json else ledger.text(report).rstrip("\n")]
 
 
 def main(argv: Optional[list[str]] = None) -> int:

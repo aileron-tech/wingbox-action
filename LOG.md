@@ -1,5 +1,70 @@
 # Log
 
+## 2026-11-19: evidence over a period: a ledger and a period report (issue #25)
+
+What changed
+
+- `wingbox_ledger.py` (new, pure; it imports `wingbox_package` for the schema check and the digest): `line`
+  (the line of a record), `encode` (JSON with sorted keys and no space), `read` (the chain: each line says its
+  number and the SHA-256 of the line before, without its line end), `next_line`, `recorded`, `outcome`
+  (`eligible`, `failed`, `unknown`), `period` (the report as a value) and `text` (the report for a reader),
+  `moment` and `boundary` (a day or a UTC time as a boundary of a period).
+- `wingbox_evidence_cli.py`: `append --ledger FILE (--record FILE | --package FILE)` and
+  `period --ledger FILE --from DATE --to DATE [--repo DIR [--branch NAME]] [--max-gap-hours N]
+  [--head-sha256 HEX] [--json]`. `append` opens the file to add to; `period --repo` asks git for the commits
+  of a branch (`git rev-list --first-parent --parents --timestamp`), nothing else.
+- `schema/wingbox-ledger-1.schema.json` (a line), `schema/wingbox-period-1.schema.json` (the report).
+- `wingbox_pr.write_ledger`: with `WINGBOX_LEDGER` naming a file both entry scripts add the line of the run
+  after the record and the package are written, also for a check that did not run; the output `ledger-head`,
+  in GitLab `WINGBOX_LEDGER_HEAD`. `action.yml`: the input `ledger`, the output. Both GitLab templates name
+  the variable; the template for shell runners hands it to the container.
+- `.github/workflows/test.yml`: the job `package` gives the action a ledger, reads the period with and
+  without the fixture repository, and adds the same run a second time.
+- Tests REQ-ACTION-190..208 (`tests/test_ledger.py`).
+
+Why
+
+- Issue #25: each run was recorded on its own; nothing collected the records, showed that none was left
+  out, or showed the gaps.
+
+Expectations of existing tests that changed with the behaviour
+
+- REQ-ACTION-187 (`tests/test_package.py`, added with #24): the command script now also imports
+  `wingbox_ledger`, and git is started with `rev-list` too; the test counts the `cat-file` calls apart from
+  the `rev-list` one, which REQ-ACTION-205 covers.
+
+Decisions where the issue was open
+
+- "The digest of its package" in a line is the SHA-256 of the manifest, with the bundle id and the state:
+  the digest of the archive changes with every review, the manifest's does not, and a review names it too.
+- A line is written from the record; its time is the record's `generated`. Neither command reads a clock.
+- The last line cannot be protected by a line after it. `append` and `period` print its SHA-256, the action
+  gives it as an output, and `period --head-sha256` checks it.
+- A record already in the ledger (by its SHA-256) is not added again; that is status 0.
+- A run is `failed` when a verdict found a defect (boundaries FAIL, existing PRESENT, baseline EXPIRED, tests
+  failed), `unknown` when it is not eligible without one; `eligible` is the word of the record.
+- "The same change" is the same pull or merge request of the same repository; outside one, the same head.
+  What followed is looked for in the whole ledger, also after the end of the period.
+- A commit has a record when a line names it as its head or as the commit checked. A merge commit whose
+  merged head a line names is listed apart and is not a defect; a squashed commit has no record unless a
+  run checked it.
+- The time of a commit is its committer time; the period is taken as given (`--to` as a day belongs to it).
+- Defects (status 1) are a broken ledger, a commit without a record and a stretch over the limit. Failed
+  and unknown runs are listed and counted, not judged.
+- `--branch` defaults to `HEAD` of the repository given.
+- A relative `ledger` path of the action starts at the workspace of the job, so both steps that write a
+  record name the same file.
+
+Not done
+
+- The tool hosts nothing: fetching the ledger before the job and storing it after is the team's set-up; the
+  README shows one way (a branch of its own, one writer at a time).
+- No line is written for a pipeline with nothing to compare (GitLab, the first push of a branch): it has no
+  record.
+- A ledger is of one repository in practice, but nothing enforces it: lines name their repository.
+- Health of collection watched apart from the collector, retention, and delivery receipts (the design issue
+  on sealing) are not part of this change.
+
 ## 2026-11-19: an evidence package, built and checked by a command (issue #24)
 
 What changed
