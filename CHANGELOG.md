@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+- The repository's own tests: the end-to-end tests (the whole script with a real Wingbox) now run
+  in the unit job on Linux, macOS and Windows; they were skipped there. One of them still expected
+  the output folder of 1.3.0, without `wingbox-evidence.json`.
+
 ## 1.4.0 - 2026-11-19
 
 ### Changes

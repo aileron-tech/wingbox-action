@@ -3,6 +3,7 @@
 
     python scripts/bump_version.py 0.8.0     that version
     python scripts/bump_version.py           the newest wingbox release on PyPI
+    python scripts/bump_version.py --show    print the current default and change nothing
 
 Rewrites the default of the `version` input in action.yml, the version named in README.md and the
 release the GitLab job installs (gitlab/wingbox.gitlab-ci.yml).
@@ -35,7 +36,18 @@ def newest_release() -> str:
         return json.load(response)["info"]["version"]
 
 
+def current(action_text: str) -> str:
+    """The default of the version input in action.yml."""
+    found = _ACTION_DEFAULT.search(action_text)
+    if found is None:
+        raise ValueError("action.yml: the default of the version input was not found")
+    return found.group(2)
+
+
 def main(args: list[str]) -> int:
+    if args == ["--show"]:
+        print(current((ROOT / "action.yml").read_text(encoding="utf-8")))
+        return 0
     version = args[0] if args else newest_release()
     if not VERSION.match(version):
         print(f"not a version: {version}", file=sys.stderr)
