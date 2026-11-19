@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+### Changes
+
+- An evidence package: with `package: true` (in GitLab `WINGBOX_PACKAGE: "true"`)
+  a run also writes `wingbox-package.zip` (output `package`, with
+  `package-state`; in GitLab in `wingbox-out/`, with `WINGBOX_PACKAGE_STATE`):
+  the record, the report and the plan, the test reports the record names byte
+  for byte, the policy files as the commit checked holds them, the schemas,
+  and `manifest.json`, which names every member with its role, media type,
+  length and SHA-256, lists the required members and says `complete` or
+  `incomplete`. An incomplete package fails the step.
+- A command builds and checks it, in CI and by hand:
+  `python wingbox_evidence_cli.py pack`, `verify` and `review`. `verify`
+  computes every digest and the manifest again, refuses an archive that is
+  unsafe to handle, and with `--repo` compares the policy files and the changed
+  files with their commit. `review` adds the decision of a person as a new
+  member that names the SHA-256 of the manifest; no earlier byte changes. Exit
+  status 0: done and good; 1: a defect was found; 2: wrong usage.
+- The same inputs give the same archive bytes: members stored without
+  compression in a fixed order with a fixed date.
+- New schemas `schema/wingbox-package-1.schema.json` (the manifest) and
+  `schema/wingbox-review-1.schema.json` (a review).
+
 ## 1.5.0 - 2026-11-19
 
 ### Changes

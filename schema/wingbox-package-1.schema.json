@@ -1,0 +1,185 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/aileron-tech/wingbox-action/blob/main/schema/wingbox-package-1.schema.json",
+  "title": "Wingbox evidence package manifest, version 1",
+  "description": "manifest.json of an evidence package: every member of the archive with its id, safe relative path, role, media type, length and SHA-256, the required members with the state of each, and what whoever packed stated. It holds neither its own digest nor a signature: a review names the SHA-256 of these bytes, and a detached attestation has the member name given under attestation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "bundle", "state", "created", "tool", "subject", "run", "retention", "control", "stated", "policy", "checks", "members", "required", "optional", "absent", "statements", "attestation"],
+  "properties": {
+    "schema": {"type": "string", "enum": ["wingbox-package/1"]},
+    "bundle": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "The id of the bundle: the SHA-256 of the lines `<sha256>  <path>` of the members, by path, each ended by a line feed."},
+    "state": {"type": "string", "enum": ["complete", "incomplete"], "description": "incomplete when a required member is not present as the record names it."},
+    "created": {"type": "string", "pattern": "^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)?$", "description": "The time of the record (its `generated`); empty without a readable record. No clock is read when a package is built."},
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "ref", "wingbox"],
+      "properties": {
+        "name": {"type": "string"},
+        "ref": {"type": "string", "description": "The tag, branch or commit of the action that ran."},
+        "wingbox": {"type": "string", "description": "The Wingbox release that built the graph."}
+      }
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "base", "head", "checked", "tree"],
+      "properties": {
+        "repository": {"type": "string"},
+        "base": {"type": "string"},
+        "head": {"type": "string"},
+        "checked": {"type": "string", "description": "The commit whose files were analysed."},
+        "tree": {"type": "string"}
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "id", "attempt", "job", "change", "url"],
+      "properties": {
+        "provider": {"type": "string"},
+        "id": {"type": "string"},
+        "attempt": {"type": "string"},
+        "job": {"type": "string"},
+        "change": {"type": "string"},
+        "url": {"type": "string", "description": "The address of the CI run, to check it there."}
+      }
+    },
+    "retention": {"type": "string", "description": "How long the job keeps the package, in the job's own words; empty when it did not say."},
+    "control": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mapping", "id", "edition", "scope", "owner", "applies", "risk"],
+      "description": "The control the evidence is for. `mapping` is none and the other values are empty when no control mapping was given.",
+      "properties": {
+        "mapping": {"type": "string", "enum": ["none"]},
+        "id": {"type": "string"},
+        "edition": {"type": "string"},
+        "scope": {"type": "string"},
+        "owner": {"type": "string"},
+        "applies": {"type": "string"},
+        "risk": {"type": "string"}
+      }
+    },
+    "stated": {
+      "type": "array",
+      "description": "Versions the job stated when it packed (build, model, prompt, tool-schema, test-data), by name.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "value"],
+        "properties": {"name": {"type": "string"}, "value": {"type": "string"}}
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "read", "files"],
+      "properties": {
+        "commit": {"type": "string", "pattern": "^([0-9a-f]{40,64})?$", "description": "The commit the policy files are taken from: the commit checked."},
+        "read": {"type": "boolean", "description": "Whether the files of that commit could be read when the package was built."},
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "kind", "state", "member"],
+            "properties": {
+              "path": {"type": "string"},
+              "kind": {"type": "string", "enum": ["baseline", "rules", "declared-rules", "workflow", "required-tests", "named"]},
+              "state": {"type": "string", "enum": ["present", "not-in-commit", "not-read"]},
+              "member": {"type": "string", "description": "The id of the member that holds the file; empty when it is not present."}
+            }
+          }
+        }
+      }
+    },
+    "checks": {
+      "type": "array",
+      "description": "Every required test and every test that uses what changed, with one outcome each and one per case.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "kind", "group", "outcome", "cases"],
+        "properties": {
+          "id": {"type": "string", "description": "The test as the record names it."},
+          "kind": {"type": "string", "enum": ["required-test", "uses-what-changed"]},
+          "group": {"type": "string", "description": "The group of the manifest of required tests; empty for a test that uses what changed."},
+          "outcome": {"type": "string", "enum": ["PASS", "FAIL", "SKIP", "NOT RUN", "UNKNOWN"]},
+          "cases": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "outcome"],
+              "properties": {
+                "id": {"type": "string"},
+                "outcome": {"type": "string", "enum": ["PASS", "FAIL", "SKIP", "NOT RUN", "UNKNOWN"]}
+              }
+            }
+          }
+        }
+      }
+    },
+    "members": {
+      "type": "array",
+      "description": "Every member of the archive but this manifest, the reviews and an attestation, by path.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "path", "role", "media-type", "length", "sha256", "required", "source", "commit"],
+        "properties": {
+          "id": {"type": "string"},
+          "path": {"type": "string", "description": "The name of the member in the archive: a safe relative path."},
+          "role": {"type": "string", "enum": ["record", "document", "test-report", "test-report-sidecar", "job-log", "policy", "schema"]},
+          "media-type": {"type": "string"},
+          "length": {"type": "integer"},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "required": {"type": "boolean"},
+          "source": {"type": "string", "description": "The name or path the bytes were read from: as the record names it, or from the root of the repository."},
+          "commit": {"type": "string", "description": "For a policy file, the commit it was read from; else empty."}
+        }
+      }
+    },
+    "required": {
+      "type": "array",
+      "description": "What a complete package holds, with the state of each.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "path", "state", "reason"],
+        "properties": {
+          "id": {"type": "string"},
+          "path": {"type": "string"},
+          "state": {"type": "string", "enum": ["present", "absent", "differs", "unreadable"]},
+          "reason": {"type": "string"}
+        }
+      }
+    },
+    "optional": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "state"],
+        "properties": {"id": {"type": "string"}, "state": {"type": "string", "enum": ["present", "absent"]}}
+      }
+    },
+    "absent": {"type": "array", "description": "The ids of the required members that are not present.", "items": {"type": "string"}},
+    "statements": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["check", "acceptance", "conformity"],
+      "description": "The three statements that stay apart: what the record states, what a review states, and what is stated nowhere.",
+      "properties": {"check": {"type": "string"}, "acceptance": {"type": "string"}, "conformity": {"type": "string"}}
+    },
+    "attestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["member", "over"],
+      "description": "The place of a detached attestation: the member name it takes and the member whose exact bytes it is made over. The tool that packs writes none.",
+      "properties": {"member": {"type": "string"}, "over": {"type": "string"}}
+    }
+  }
+}
