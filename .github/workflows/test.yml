@@ -78,7 +78,8 @@ jobs:
         working-directory: ${{ runner.temp }}/fixture
         run: test -z "$(git status --porcelain)"
   # The evidence package of a run on the fixture repository: the action writes it, the command verifies it
-  # against the repository, the package built again by hand is the same bytes, and a review is added.
+  # against the repository, the package built again by hand is the same bytes, and a review is added. The run
+  # also adds its line to a ledger, which `period` reads.
   package:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
@@ -104,6 +105,7 @@ jobs:
           head: ${{ steps.fixture.outputs.head }}
           comment: "false"
           package: true
+          ledger: ${{ runner.temp }}/ledger/ledger.jsonl
       - name: Verify the package, build it again, review it
         shell: bash
         env:
@@ -116,6 +118,23 @@ jobs:
           cmp "$PACKAGE" "$RUNNER_TEMP/again.zip"
           python -P wingbox_evidence_cli.py review "$PACKAGE" --reviewer "the test workflow" --decision accepted --grounds "the package verifies against the fixture repository"
           python -P wingbox_evidence_cli.py verify "$PACKAGE" --repo "$RUNNER_TEMP/fixture"
+      # The ledger holds the line of the run; the period is without a defect by itself, and compared with the
+      # fixture repository it names the base commit, which no run checked, and ends with status 1.
+      - name: Read the period from the ledger
+        shell: bash
+        env:
+          PACKAGE: ${{ steps.wingbox.outputs.package }}
+          LEDGER_HEAD: ${{ steps.wingbox.outputs.ledger-head }}
+          BASE: ${{ steps.fixture.outputs.base }}
+        run: |
+          python -P wingbox_evidence_cli.py period --ledger "$RUNNER_TEMP/ledger/ledger.jsonl" --from 2020-01-01 --to 2100-01-01 --head-sha256 "$LEDGER_HEAD"
+          status=0
+          python -P wingbox_evidence_cli.py period --ledger "$RUNNER_TEMP/ledger/ledger.jsonl" --from 2020-01-01 --to 2100-01-01 --repo "$RUNNER_TEMP/fixture" > "$RUNNER_TEMP/period.txt" || status=$?
+          cat "$RUNNER_TEMP/period.txt"
+          test "$status" = 1
+          grep -q "without a record: $BASE" "$RUNNER_TEMP/period.txt"
+          python -P wingbox_evidence_cli.py append --ledger "$RUNNER_TEMP/ledger/ledger.jsonl" --package "$PACKAGE" > "$RUNNER_TEMP/append.txt"
+          grep -q "append: already recorded" "$RUNNER_TEMP/append.txt"
       - name: Check that the fixture checkout is clean
         shell: bash
         working-directory: ${{ runner.temp }}/fixture

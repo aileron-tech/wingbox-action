@@ -9,7 +9,8 @@ and then:
 - prints the comment into the job log;
 - writes wingbox-out/wingbox-report.md, wingbox-out/wingbox-plan.sexp and wingbox-out/wingbox.env
   (the result and the counts as WINGBOX_ variables for later jobs) for the job's artifacts, and with
-  WINGBOX_PACKAGE true wingbox-out/wingbox-package.zip, the evidence package of the run;
+  WINGBOX_PACKAGE true wingbox-out/wingbox-package.zip, the evidence package of the run; with WINGBOX_LEDGER
+  naming a file, the line of the run is added at the end of that ledger;
 - in a merge request pipeline, when the variable WINGBOX_GITLAB_TOKEN holds a token that may write
   notes (a project access token with the `api` scope: the job token cannot), writes the comment as
   one note on the merge request, found again by its marker and updated on each push.
@@ -158,24 +159,26 @@ def _inside(root: str, out: Path) -> tuple[str, ...]:
         return ()
 
 
-def package_values(state: str) -> dict[str, str]:
-    """The state of the evidence package as a value of wingbox.env (WINGBOX_PACKAGE_STATE); nothing when no
-    package was asked for (WINGBOX_PACKAGE)."""
-    return {"package-state": state} if state else {}
+def package_values(state: str, head: str = "") -> dict[str, str]:
+    """The state of the evidence package and the SHA-256 of the last line of the ledger as values of
+    wingbox.env (WINGBOX_PACKAGE_STATE, WINGBOX_LEDGER_HEAD); nothing for what was not asked for
+    (WINGBOX_PACKAGE, WINGBOX_LEDGER)."""
+    return {**({"package-state": state} if state else {}), **({"ledger-head": head} if head else {})}
 
 
 def did_not_run(env: Mapping[str, str], out: Path, root: str) -> int:
     """Write the record of a check that did not run, with wingbox.env; 0, or 1 when an evidence package was
-    asked for and is incomplete. The job's script calls this when the check left no record (the install
+    asked for and is incomplete or a ledger was named and does not verify. The job's script calls this when the check left no record (the install
     failed), so that the artifacts always hold one."""
     chosen = commits(env)
     base, head = (chosen.base, chosen.head) if isinstance(chosen, Compare) else ("", env.get("CI_COMMIT_SHA", ""))
     report = pr.not_run_report(base, head, env)
     path = pr.write_evidence(report, gitlab_run(env), str(out), {})
-    _package, state, status = pr.write_package(env, str(out), root, pr.wingbox_policy.named(env))
-    (out / "wingbox.env").write_text(dotenv({**pr.outputs(report), **package_values(state)}), encoding="utf-8", newline="\n")
+    package, state, status = pr.write_package(env, str(out), root, pr.wingbox_policy.named(env))
+    head, ledger_status = pr.write_ledger(env, str(out), package, root)
+    (out / "wingbox.env").write_text(dotenv({**pr.outputs(report), **package_values(state, head)}), encoding="utf-8", newline="\n")
     print(f"Wingbox: the check did not run; the record that says so is {path}")
-    return status
+    return max(status, ledger_status)
 
 
 def main() -> int:
@@ -219,8 +222,9 @@ def main() -> int:
     (out / "wingbox-report.md").write_text(summary, encoding="utf-8", newline="\n")
     (out / "wingbox-plan.sexp").write_text(plan, encoding="utf-8", newline="\n")
     pr.write_evidence(report, gitlab_run(env), str(out), {"wingbox-report.md": summary, "wingbox-plan.sexp": plan})
-    _package, package_state, package_status = pr.write_package(env, str(out), root, pr.wingbox_policy.named(env))
-    (out / "wingbox.env").write_text(dotenv({**values, **package_values(package_state)}), encoding="utf-8", newline="\n")
+    package, package_state, package_status = pr.write_package(env, str(out), root, pr.wingbox_policy.named(env))
+    ledger_head, ledger_status = pr.write_ledger(env, str(out), package, root)
+    (out / "wingbox.env").write_text(dotenv({**values, **package_values(package_state, ledger_head)}), encoding="utf-8", newline="\n")
     print(comment)
     print(f"Result of the boundary check: {outcome} (execution {execution})" + (f": {reasons}" if reasons else ""))
     merge_request = env.get("CI_MERGE_REQUEST_IID", "")
@@ -233,7 +237,7 @@ def main() -> int:
                 print(post_note(comment, env["CI_API_V4_URL"], env["CI_PROJECT_ID"], merge_request, api_call(token), pr.needs_comment(report)))
             except (urllib.error.URLError, KeyError, ValueError) as error:
                 print(f"WARNING: could not write the merge request note ({error}); the report is in the job log and in {out}")
-    return max(pr.fail_on_status(report, fail_on), pr.tests_failed(report, env), pr.policy_failed(report), package_status)
+    return max(pr.fail_on_status(report, fail_on), pr.tests_failed(report, env), pr.policy_failed(report), package_status, ledger_status)
 
 
 if __name__ == "__main__":

@@ -60,6 +60,9 @@ inputs:
   package:
     description: "true: also write the evidence package of the run, wingbox-package.zip beside the record: the record, the report, the plan, the test reports the record names as they are on disk, the policy files as the commit checked holds them and the schemas, with a manifest of every member. An incomplete package fails the step."
     default: "false"
+  ledger:
+    description: "Path of a ledger file (absolute, or from the workspace): the run adds its line at the end, one line per run with the verdicts, the SHA-256 of the record and of the manifest of its package, and the SHA-256 of the line before. Where the file is kept between runs is yours to set up. Empty: no line is written."
+    default: ""
   github-token:
     description: Token for the comment (needs pull-requests write).
     default: ${{ github.token }}
@@ -110,6 +113,9 @@ outputs:
   package-state:
     description: "complete, or incomplete when a required member of the evidence package is absent; empty unless package is true."
     value: ${{ steps.check.outputs.package-state || steps.did-not-run.outputs.package-state }}
+  ledger-head:
+    description: The SHA-256 of the last line of the ledger after this run; empty unless ledger names a file. Kept where the ledger is not, it shows later that no line was removed from the end.
+    value: ${{ steps.check.outputs.ledger-head || steps.did-not-run.outputs.ledger-head }}
   result:
     description: "Result of the boundary check: PASS, FAIL, UNKNOWN or NOT_APPLICABLE. A part that was not checked or a tool error is UNKNOWN, never PASS."
     value: ${{ steps.check.outputs.result || steps.did-not-run.outputs.result }}
@@ -181,6 +187,7 @@ runs:
         WINGBOX_REQUIRE_TEST_PROVENANCE: ${{ inputs.require-test-provenance }}
         WINGBOX_TEST_STEP_OUTCOME: ${{ inputs.test-step-outcome }}
         WINGBOX_PACKAGE: ${{ inputs.package }}
+        WINGBOX_LEDGER: ${{ inputs.ledger }}
         WINGBOX_TOKEN: ${{ inputs.github-token }}
     - name: Upload the map
       if: ${{ !cancelled() && inputs.upload-map == 'true' && steps.check.outputs.map != '' }}
@@ -207,3 +214,4 @@ runs:
         WINGBOX_TEST_STEP_OUTCOME: ${{ inputs.test-step-outcome }}
         WINGBOX_TEST_COMMAND: ${{ inputs.test-command }}
         WINGBOX_PACKAGE: ${{ inputs.package }}
+        WINGBOX_LEDGER: ${{ inputs.ledger }}

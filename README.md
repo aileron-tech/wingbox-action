@@ -799,6 +799,95 @@ names what is absent). The action has no access to the log of its own job; add i
 the record that says so, and the policy files of the head it names; that step of the action reads
 the commit from the workspace folder, so with another `working-directory` its package is incomplete.
 
+## Evidence over a period
+
+One record, or one package, says what one run found. A reviewer who has to judge a period needs
+every run of it: the failed and the unknown ones, each change of the rules, the accepted breaks
+that came and went, and the stretches in which nothing was checked. Two more commands keep that:
+
+```bash
+python wingbox_evidence_cli.py append --ledger ledger.jsonl (--package package.zip | --record wingbox-evidence.json)
+python wingbox_evidence_cli.py period --ledger ledger.jsonl --from DATE --to DATE [--repo DIR [--branch NAME]] [--max-gap-hours N] [--head-sha256 HEX] [--json]
+```
+
+They end with the same exit statuses as the other commands: 0 (`append: recorded` or
+`append: already recorded`, `period: ok`), 1 (`append: not recorded (...)`: the ledger or the
+package does not verify, or the file is no record; `period: failed (N defects)`: the ledger is
+broken or the period has a gap), 2 for wrong usage.
+
+**The ledger** is a text file with one line per run, added at its end and never changed
+([`schema/wingbox-ledger-1.schema.json`](schema/wingbox-ledger-1.schema.json)). A line is JSON
+with its keys in order and no space: the key of the run (provider, repository, run id, attempt,
+job), the time of the record, the repository, the change, the base, the head and the commit
+checked, the verdicts (`boundaries`, `existing`, `baseline`, `tests`, `coverage`, `execution`),
+`eligible` with its reasons, the policy files the change edits, the accepted breaks with owner and
+end date, the SHA-256 of the record, and of the package the SHA-256 of its manifest (what a review
+names, and what stays the same when reviews are added), its bundle id and its state. `append`
+reads no clock, opens the file to add to, and writes one line; a record that is already in the
+ledger is not added twice, and nothing is added to a ledger that does not verify.
+
+Each line holds its number and the SHA-256 of the line before it, without its line end. So a
+line that was removed or changed breaks the chain where it happened, and anyone can check it:
+`sed -n 2p ledger.jsonl | tr -d '\r\n' | sha256sum` is the `previous` of line 3. The last line has
+no line after it: `append` and `period` print its SHA-256 (`head-sha256`, the output
+`ledger-head`). Kept where the ledger is not, and given back with `--head-sha256`, it shows that
+no line was cut from the end.
+
+The tool writes and verifies; it hosts nothing. Where the ledger is kept is the team's choice: a
+branch, an artifact store, the receiving system. In the action, `ledger: PATH` (in GitLab
+`WINGBOX_LEDGER`, a path from the project folder; with the template for shell runners a file in
+`wingbox-out/`) adds the line of the run to the file at that path, from the package when
+`package: true` and else from the record, also for a check that did not run. Fetch the file
+before the step and store it after, for example on a branch of its own:
+
+```yaml
+    concurrency: evidence-ledger          # one writer at a time: two lines added side by side break the chain
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          ref: evidence-ledger
+          path: evidence-ledger
+      - uses: aileron-tech/wingbox-action@v1
+        with:
+          package: true
+          ledger: evidence-ledger/ledger.jsonl
+      - run: git -C evidence-ledger add ledger.jsonl && git -C evidence-ledger -c user.name=ci -c user.email=ci@example.invalid commit -q -m "one run" && git -C evidence-ledger push
+```
+
+That job needs `contents: write` and the `concurrency` group; a pull request from a fork cannot
+push, so there the line is written by a job that can (a run on the default branch).
+
+**`period`** reads a ledger and counts what it recorded between two dates. A day (`2026-01-31`)
+as `--to` belongs to the period; a moment (`2026-01-31T12:00:00Z`, UTC) ends it and is left out.
+The report, as text or with `--json`
+([`schema/wingbox-period-1.schema.json`](schema/wingbox-period-1.schema.json)):
+
+- what it is: a count of what the ledger recorded in the period, for a reviewer. It does not conclude that a control operated effectively;
+- the ledger: its lines, whether the chain is intact, the SHA-256 of its last line;
+- the runs of the period: how many, how many eligible as evidence, `failed` and `unknown`, and
+  the number by the word of each verdict and by the state of the package;
+- every run that is not eligible, `failed` (a verdict found a defect: a boundary finding
+  introduced, a violation on the head, a baseline entry past its end date, a failed test) or
+  `unknown` (not eligible, and no verdict found one), with its reasons and what followed it: the
+  first later eligible run on the same change (the same pull or merge request; outside one, the
+  same head), or none;
+- every change of a policy file, with the run that showed it;
+- the accepted breaks of the period, each with owner and end date, the runs that held it, and in
+  how many of them it was past its end date;
+- the gaps. With `--repo DIR --branch NAME` (default `HEAD`) the ledger is compared with the
+  first-parent commits of that branch whose time is in the period: a commit a line names as its
+  head or as the commit checked has a record; a merge commit that no line names, while a line
+  names the head it merged, is listed apart (only their merged head has a record); every other
+  commit is listed as without a record, never skipped. With `--max-gap-hours N` every stretch
+  without a run longer than N hours is listed, from the start of the period and to its end too.
+
+A commit without a record, a stretch over the limit and a broken ledger are defects: status 1.
+Failed and unknown runs are counted and listed, not judged. `period` reads no clock either: the
+period is taken as given, so one that ends in the future ends with a stretch.
+
 ## Inputs
 
 | Input | Default | Meaning |
@@ -821,6 +910,7 @@ the commit from the workspace folder, so with another `working-directory` its pa
 | `test-command` | none | The command of the test step that wrote the test results. Recorded verbatim in the evidence record; not run. |
 | `require-test-provenance` | `false` | Refuse a test report without a matching sidecar. See [Where a test report comes from](#where-a-test-report-comes-from). |
 | `package` | `false` | `true`: also write the evidence package of the run, `wingbox-package.zip`. An incomplete package fails the step. See [The evidence package](#the-evidence-package). |
+| `ledger` | none | Path of a ledger file, absolute or from the workspace: the run adds its line at the end. See [Evidence over a period](#evidence-over-a-period). |
 | `github-token` | `github.token` | Token for the comment. |
 
 ## Outputs
@@ -842,6 +932,7 @@ the commit from the workspace folder, so with another `working-directory` its pa
 | `evidence` | Path of the evidence record of the run (`wingbox-evidence.json`). Written also when the check did not run. |
 | `package` | Path of the evidence package of the run (`wingbox-package.zip`); empty unless `package` is `true`. |
 | `package-state` | `complete`, or `incomplete` when a required member of the package is absent; empty unless `package` is `true`. |
+| `ledger-head` | The SHA-256 of the last line of the ledger after this run; empty unless `ledger` names a file. |
 | `result` | `PASS`, `FAIL`, `UNKNOWN` or `NOT_APPLICABLE`: the result of the boundary check. |
 | `execution` | `ok`, or `error` when a wingbox command ended abnormally. |
 | `reasons` | The reasons of the result, separated by semicolons; empty for `PASS`. |
@@ -885,6 +976,9 @@ What it leaves:
 - with `WINGBOX_PACKAGE: "true"`, `wingbox-out/wingbox-package.zip`, the
   [evidence package](#the-evidence-package) of the run, and `WINGBOX_PACKAGE_STATE` (`complete` or
   `incomplete`) in `wingbox.env`; an incomplete package fails the job;
+- with `WINGBOX_LEDGER` naming a file, the line of the run at the end of that
+  [ledger](#evidence-over-a-period), and `WINGBOX_LEDGER_HEAD` (the SHA-256 of its last line) in
+  `wingbox.env`;
 - `wingbox-out/wingbox.env` as a dotenv report, so later jobs of the pipeline read
   `WINGBOX_RESULT` (PASS, FAIL, UNKNOWN, NOT_APPLICABLE), `WINGBOX_EXECUTION`, `WINGBOX_REASONS`,
   `WINGBOX_TESTS_TO_RUN`, `WINGBOX_TESTS_PASSED`, `WINGBOX_TESTS_FAILED`,
@@ -913,6 +1007,7 @@ wingbox:
     WINGBOX_TEST_COMMAND: "pytest --junitxml=test-results/junit.xml"   # recorded verbatim, not run
     WINGBOX_REQUIRE_TEST_PROVENANCE: "true"      # refuse a test report without a matching sidecar
     WINGBOX_PACKAGE: "true"                      # also write wingbox-out/wingbox-package.zip, the evidence package
+    WINGBOX_LEDGER: "wingbox-out/ledger.jsonl"   # add the line of the run at the end of this ledger
 ```
 
 To hand over test reports, let the job run the tests: `WINGBOX_TEST_SCRIPT` is the command that
@@ -967,7 +1062,8 @@ then writes no comment, warns, and keeps the report in the job summary.
 - **No image is uploaded** for the diagram: it is text in the comment.
 - **Nothing of an evidence package is run or unpacked.** `verify` and `review`
   read the archive in memory; `pack` and `verify --repo` ask git for file
-  contents only (`git cat-file`).
+  contents only (`git cat-file`), `period --repo` for the commits of a branch
+  (`git rev-list`).
 - **No artifact unless you ask.** With `upload-map: true` the map is stored as
   a workflow artifact of your own repository. How long it is kept is your
   setting (the artifact retention of the repository or organization); the
@@ -1016,7 +1112,7 @@ then writes no comment, warns, and keeps the report in the job summary.
 ```bash
 python -m unittest discover -s tests          # the report, the diagram, the facts, the metadata
 python tests/make_fixture.py /tmp/fixture     # a repository with a base and a head commit
-python wingbox_evidence_cli.py verify package.zip   # check an evidence package (also: pack, review)
+python wingbox_evidence_cli.py verify package.zip   # check an evidence package (also: pack, review, append, period)
 python tools/replay.py CLONE BASE HEAD --out DIR   # the comment for a past pull request, locally
 python scripts/bump_version.py 0.10.1         # the default wingbox release (no argument: the newest on PyPI)
 ```
@@ -1035,6 +1131,7 @@ diagram, all pure functions.
 `wingbox_evidence_cli.py` is the I/O of the evidence package (files, `git cat-file`);
 `wingbox_package.py` holds its rules: the archive form, the manifest, the check and the review,
 pure, standard library only and with no import of another module of this repository.
+`wingbox_ledger.py` holds the rules of the ledger and of the report of a period, pure too.
 
 ## License
 
