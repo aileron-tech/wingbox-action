@@ -48,7 +48,7 @@ the tests gets no comment; the job summary says so in one line.
 
 The action uses [Wingbox](https://github.com/aileron-tech/wingbox), an
 open-source code graph that is built on the runner, and installs
-wingbox 0.13.0 from PyPI.
+wingbox 0.14.0 from PyPI.
 
 ## What the comment looks like
 
@@ -224,7 +224,7 @@ writes the same plan to a file (output `plan`). It is a list of S-expression
 lines in the order to check:
 
 ```lisp
-(review-plan :schema 1 :result UNKNOWN :execution ok :base <sha> :head <sha> :wingbox "0.13.0" :hops 2 :checked <sha> :tree merge)
+(review-plan :schema 1 :result UNKNOWN :execution ok :base <sha> :head <sha> :wingbox "0.14.0" :hops 2 :checked <sha> :tree merge)
 (reason "not-checked: . (no-layer-style)")
 (changed-item "src/billing/invoice.py" total :kind fn :line 12 :how changed)
 (look "src/api/orders.py" 40 :module src/api/orders :why call :item total :places 2)
@@ -431,7 +431,7 @@ wingbox:
   variables:
     WINGBOX_FAIL_ON: "strict"     # none (default), violations, not-checked or strict
     WINGBOX_HOPS: "2"
-    WINGBOX_VERSION: "0.13.0"     # the wingbox release from PyPI
+    WINGBOX_VERSION: "0.14.0"     # the wingbox release from PyPI
     WINGBOX_ACTION_REF: "v1"      # the tag, branch or commit of this repository the scripts come from
     WINGBOX_TEST_RESULTS: "test-results/*.xml"   # JUnit XML reports of the tests this job ran before the check
     WINGBOX_REQUIRE_TESTS: "true"                # fail unless every test that uses what changed has a passed record

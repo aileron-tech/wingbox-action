@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.2 - 2026-11-19
+
+### Changes
+
+- The default Wingbox release is 0.14.0. The check asks Wingbox for the same facts as before
+  (`--sexp`), so reports do not change.
+
 ## 1.4.1 - 2026-11-19
 
 ### Changes
