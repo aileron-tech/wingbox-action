@@ -11,10 +11,11 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from typing import Optional
 
 import wingbox_tests
 from wingbox_facts import Report
-from wingbox_report import result, test_evidence, tests_to_run, untouched_count
+from wingbox_report import required_evidence, result, test_evidence, tests_summary, tests_to_run, untouched_count  # noqa: F401
 
 SCHEMA = "wingbox-evidence/2"
 FILE_NAME = "wingbox-evidence.json"
@@ -32,17 +33,13 @@ class Run:
     generated: str       # UTC time of the record, YYYY-MM-DDTHH:MM:SSZ
 
 
-def tests_summary(report: Report) -> str:
-    """none: no test report was given; failed: a test to run has a failed case; incomplete: one has a case
-    that was skipped or did not run, or has no record; complete: every recorded case of every test to run
-    passed (also when there is no test to run)."""
-    found = test_evidence(report)
-    if found is None:
-        return "none"
-    statuses = {item.status for item in found}
-    if wingbox_tests.FAILED in statuses:
-        return "failed"
-    return "incomplete" if statuses - {wingbox_tests.PASSED} else "complete"
+def _test_record(item: Optional[wingbox_tests.Evidence]) -> dict[str, object]:
+    """The status, the number of cases and the cases of one test, as the record writes them; `none` when no
+    test report was given."""
+    if item is None:
+        return {"status": "none", "cases": 0, "records": []}
+    return {"status": item.status, "cases": item.cases,
+            "records": [{"where": case.where, "name": case.name, "status": case.status} for case in item.records]}
 
 
 def build_evidence(report: Report, run: Run, documents: dict[str, str]) -> dict[str, object]:
@@ -50,6 +47,8 @@ def build_evidence(report: Report, run: Run, documents: dict[str, str]) -> dict[
     outcome, execution, reasons = result(report)
     found = test_evidence(report)
     recorded = {item.test: item for item in found or ()}
+    needed = required_evidence(report)
+    manifest = report.tests_manifest
     tree = report.tree
     return {
         "schema": SCHEMA,
@@ -66,11 +65,12 @@ def build_evidence(report: Report, run: Run, documents: dict[str, str]) -> dict[
         "files": [{"path": path, "sha256": digest} for path, digest in report.hashes],
         "tests": {
             "evidence": tests_summary(report),
-            "to-run": [{"test": test.shown, "status": recorded[test.shown].status if test.shown in recorded else "none",
-                        "cases": recorded[test.shown].cases if test.shown in recorded else 0,
-                        "records": [{"where": case.where, "name": case.name, "status": case.status}
-                                    for case in (recorded[test.shown].records if test.shown in recorded else ())]}
-                       for test in tests_to_run(report)],
+            "to-run": [{"test": test.shown, **_test_record(recorded.get(test.shown))} for test in tests_to_run(report)],
+            "required": [{"group": wanted.group, "test": wanted.test, **_test_record(None if needed is None else needed[index])}
+                         for index, wanted in enumerate(report.required_tests)],
+            "manifest": {"path": manifest.path if manifest else "", "source": manifest.source if manifest else "none",
+                         "commit": manifest.commit if manifest else "", "sha256": manifest.sha256 if manifest else "",
+                         "errors": list(manifest.errors) if manifest else []},
             "reports": [{"path": read.path, "sha256": read.sha256, "cases": read.cases} for read in report.test_reports],
         },
         "documents": [{"name": name, "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest()} for name, text in sorted(documents.items())],

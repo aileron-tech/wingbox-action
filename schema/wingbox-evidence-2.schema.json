@@ -80,7 +80,7 @@
       "additionalProperties": false,
       "required": ["evidence", "to-run", "reports"],
       "properties": {
-        "evidence": {"type": "string", "enum": ["none", "complete", "incomplete", "failed"], "description": "none: no test report was given. failed: a test to run has a failed case. incomplete: one has a case that was skipped or did not run, or no record. complete: every recorded case of every test to run passed."},
+        "evidence": {"type": "string", "enum": ["none", "none-found", "complete", "incomplete", "failed"], "description": "none: no test report was given. none-found: reports were given, no test that uses what changed was found and none is required: the reports say nothing about this change. failed: a test to run or a required test has a failed case. incomplete: one has a case that was skipped or did not run, or no record, or the manifest of required tests could not be read. complete: every recorded case of every test to run and of every required test passed."},
         "to-run": {
           "type": "array",
           "items": {
@@ -106,6 +106,47 @@
                 }
               }
             }
+          }
+        },
+        "required": {
+          "type": "array",
+          "description": "The tests the manifest of required tests names for this change, whatever the graph found.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["group", "test", "status", "cases", "records"],
+            "properties": {
+              "group": {"type": "string", "description": "The group of the manifest that names the test."},
+              "test": {"type": "string", "description": "A test file, or <file, class or Go folder>::<case>."},
+              "status": {"type": "string", "enum": ["passed", "failed", "partial", "skipped", "no-record", "none"]},
+              "cases": {"type": "integer"},
+              "records": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["where", "name", "status"],
+                  "properties": {
+                    "where": {"type": "string"},
+                    "name": {"type": "string"},
+                    "status": {"type": "string", "enum": ["passed", "failed", "skipped", "no-record"]}
+                  }
+                }
+              }
+            }
+          }
+        },
+        "manifest": {
+          "type": "object",
+          "description": "The manifest of required tests as it was read.",
+          "additionalProperties": false,
+          "required": ["path", "source", "commit", "sha256", "errors"],
+          "properties": {
+            "path": {"type": "string", "description": "From the root of the repository; empty when the repository has none."},
+            "source": {"type": "string", "enum": ["base", "head", "none"], "description": "base: read from the base commit. head: only the checked files hold it. none: there is none."},
+            "commit": {"type": "string", "description": "The base commit it was read from; empty otherwise."},
+            "sha256": {"type": "string", "description": "Of the bytes of the manifest; empty when there is none."},
+            "errors": {"type": "array", "items": {"type": "string"}, "description": "Why the manifest was refused; what the change must pass is then not known."}
           }
         },
         "reports": {

@@ -40,8 +40,11 @@ inputs:
     description: "Glob patterns of the JUnit XML reports the test step of this job wrote, one per line (** crosses folders). The report then says for each test that uses what changed which cases these reports hold of it and how each ended. The check itself never runs a test."
     default: ""
   require-tests:
-    description: Fail the job unless every test that uses what changed is passed in the test results (every case recorded for it passed). It does not change the result of the boundary check.
+    description: "true: fail the job unless every test that uses what changed, and every test the manifest requires for the change, is passed in the test results (every case recorded for it passed). strict: as true, and fail a change of source code for which no test was found. It does not change the result of the boundary check."
     default: "false"
+  required-tests:
+    description: "Path of the manifest of required tests, from the root of the repository; empty: .wingbox/required-tests.yaml when the repository has it. The manifest of the base commit counts."
+    default: ""
   github-token:
     description: Token for the comment (needs pull-requests write).
     default: ${{ github.token }}
@@ -89,6 +92,15 @@ outputs:
   tests-without-record:
     description: Number of those tests that were skipped, in whole or in part, or are not in the test results; empty without test results.
     value: ${{ steps.check.outputs.tests-without-record }}
+  tests-evidence:
+    description: "The test evidence in one word: none (no test results), none-found (no test uses what changed and none is required), complete, incomplete or failed."
+    value: ${{ steps.check.outputs.tests-evidence }}
+  tests-required:
+    description: Number of tests the manifest of required tests names for this change.
+    value: ${{ steps.check.outputs.tests-required }}
+  tests-required-passed:
+    description: Number of those required tests that are passed in the test results; empty without test results.
+    value: ${{ steps.check.outputs.tests-required-passed }}
 
 runs:
   using: composite
@@ -121,6 +133,7 @@ runs:
         WINGBOX_HEAD: ${{ inputs.head }}
         WINGBOX_TEST_RESULTS: ${{ inputs.test-results }}
         WINGBOX_REQUIRE_TESTS: ${{ inputs.require-tests }}
+        WINGBOX_REQUIRED_TESTS: ${{ inputs.required-tests }}
         WINGBOX_TOKEN: ${{ inputs.github-token }}
     - name: Upload the map
       if: ${{ !cancelled() && inputs.upload-map == 'true' && steps.check.outputs.map != '' }}

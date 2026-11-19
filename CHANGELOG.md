@@ -15,9 +15,26 @@
 - The evidence record is `wingbox-evidence/2`
   (`schema/wingbox-evidence-2.schema.json`): each test to run gains `records`,
   and its status may be `partial`.
+- A manifest of required tests, `.wingbox/required-tests.yaml` (input
+  `required-tests` for another path): named groups, each with the paths it
+  applies to and the tests a change of those paths must pass, a file or one
+  case (`tests/test_billing.py::test_total`). A required test without a
+  passed record makes the test evidence `incomplete` or `failed` whatever the
+  graph found. The manifest of the base commit counts. The plan has
+  `required-test` lines, the comment a "Required tests" line, the record
+  `tests.required` and `tests.manifest`.
+- New outputs `tests-evidence` (`none`, `none-found`, `complete`,
+  `incomplete`, `failed`), `tests-required` and `tests-required-passed`; in
+  GitLab `WINGBOX_TESTS_EVIDENCE`, `WINGBOX_TESTS_REQUIRED` and
+  `WINGBOX_TESTS_REQUIRED_PASSED`.
+- `require-tests: strict`: as `true`, and a change of source code for which
+  no test was found fails the job. With `true` such a change passes and the
+  log says that no test was found.
 
 ### Fixes
 
+- Test evidence read `complete` when test results were given and no test
+  uses what changed. That state is now `none-found`.
 - A test file with a passed and a skipped case was `passed`. A test is now
   `passed` only when every case recorded for it passed.
 - One record of a Go package counted for every test file of its folder. A

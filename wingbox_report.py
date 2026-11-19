@@ -344,6 +344,42 @@ def test_evidence(report: Report) -> Optional[tuple[wingbox_tests.Evidence, ...]
     return wingbox_tests.evidence([test.shown for test in tests_to_run(report)], list(report.test_cases), dict(report.test_functions))
 
 
+def required_evidence(report: Report) -> Optional[tuple[wingbox_tests.Evidence, ...]]:
+    """What the test reports hold about each test the manifest requires for this change, in the order of
+    report.required_tests; None when no test report was given."""
+    if report.test_cases is None:
+        return None
+    return wingbox_tests.evidence([item.test for item in report.required_tests], list(report.test_cases), dict(report.test_functions))
+
+
+def holds_source(report: Report) -> bool:
+    """Whether the change holds source code outside the tests: a module of the graph, or a file with the
+    ending of a source file (its language may have been left out of the graph)."""
+    return any((changed.module is not None or wingbox_tests.SOURCE_FILE.search(changed.path)) and not is_test(changed.path) for changed in report.changed)
+
+
+def manifest_errors(report: Report) -> tuple[str, ...]:
+    """Why the manifest of required tests could not be read; empty when it was, or when there is none."""
+    return report.tests_manifest.errors if report.tests_manifest is not None else ()
+
+
+def tests_summary(report: Report) -> str:
+    """The test evidence of a run in one word. none: no test report was given. none-found: reports were
+    given, the graph found no test that uses what changed and the manifest requires none: the reports say
+    nothing about this change. failed: a test to run or a required test has a failed case. incomplete: one
+    has a case that was skipped or did not run, or has no record, or the manifest could not be read.
+    complete: every recorded case of every test to run and of every required test passed."""
+    found, needed = test_evidence(report), required_evidence(report)
+    if found is None or needed is None:
+        return "none"
+    statuses = {item.status for item in (*found, *needed)}
+    if wingbox_tests.FAILED in statuses:
+        return "failed"
+    if statuses - {wingbox_tests.PASSED} or manifest_errors(report):
+        return "incomplete"
+    return "complete" if statuses else "none-found"
+
+
 def evidence_counts(report: Report) -> tuple[str, str, str]:
     """(tests to run whose every recorded case passed, with a failed case, without a passing record: skipped
     in whole or in part, or no record), as the text of the outputs; three empty texts when no test report was
@@ -356,23 +392,32 @@ def evidence_counts(report: Report) -> tuple[str, str, str]:
     return str(passed), str(failed), str(len(found) - passed - failed)
 
 
-def tests_status(report: Report, require: bool) -> int:
-    """1 when a passing record is required for every test to run and one has none (no test report was given,
-    or the test failed, was skipped in whole or in part, or is not in the reports); else 0."""
-    if not require or not tests_to_run(report):
+def tests_status(report: Report, require: bool, strict: bool = False) -> int:
+    """1 when a passing record is required and missing: a test to run or a required test has none (no test
+    report was given, or the test failed, was skipped in whole or in part, or is not in the reports), or the
+    manifest of required tests could not be read. A change no test was found for passes, unless strict and
+    the change holds source code outside the tests. Else 0."""
+    if not require:
         return 0
-    found = test_evidence(report)
-    return 0 if found is not None and all(item.status == wingbox_tests.PASSED for item in found) else 1
+    if manifest_errors(report):
+        return 1
+    if not tests_to_run(report) and not report.required_tests:
+        return 1 if strict and holds_source(report) else 0
+    found, needed = test_evidence(report), required_evidence(report)
+    return 0 if found is not None and needed is not None and all(item.status == wingbox_tests.PASSED for item in (*found, *needed)) else 1
 
 
 def outputs(report: Report) -> dict[str, str]:
     """The outputs of a run that are read from the report alone, by their names."""
     outcome, execution, reasons = result(report)
     passed, failed, without = evidence_counts(report)
+    needed = required_evidence(report)
     return {"result": outcome, "execution": execution, "reasons": "; ".join(reasons),
             "untouched-dependents": str(untouched_count(report)), "introduced-findings": str(len(report.introduced)),
             "not-checked-parts": str(len(report.not_checked)), "tests-to-run": str(len(tests_to_run(report))),
-            "tests-passed": passed, "tests-failed": failed, "tests-without-record": without}
+            "tests-passed": passed, "tests-failed": failed, "tests-without-record": without,
+            "tests-evidence": tests_summary(report), "tests-required": str(len(report.required_tests)),
+            "tests-required-passed": "" if needed is None else str(sum(1 for item in needed if item.status == wingbox_tests.PASSED))}
 
 
 def _evidence_words(recorded: tuple[wingbox_tests.Evidence, ...], full: bool) -> str:
@@ -405,6 +450,27 @@ def _evidence_words(recorded: tuple[wingbox_tests.Evidence, ...], full: bool) ->
     if none:
         said.append(f"{len(none)} without a record in the test report ({listed(none)})")
     return ", ".join(said)
+
+
+def _required_lines(report: Report, full: bool) -> list[str]:
+    """The lines of the comment about the tests the manifest requires for this change, and about a manifest
+    that could not be read."""
+    read = report.tests_manifest
+    if read is None:
+        return []
+    lines = []
+    if read.errors:
+        lines += [f"The manifest of required tests {_code(read.path)} could not be read ({'; '.join(read.errors)}): "
+                  "which tests this change must pass is not known.", ""]
+    if report.required_tests:
+        needed = required_evidence(report)
+        names = [item.test for item in report.required_tests]
+        shown = names if full else names[:TESTS_LIMIT]
+        said = (", ".join(_code(name) for name in shown) + (f" and {len(names) - len(shown)} more" if len(names) > len(shown) else "")
+                if needed is None else _evidence_words(needed, full))
+        where = "the base" if read.source == "base" else "the checked files"
+        lines += [f"Required tests ({len(names)}, by {_code(read.path)} of {where}): {said}.", ""]
+    return lines
 
 
 def _whole_files(report: Report) -> set[str]:
@@ -448,8 +514,9 @@ def build_plan(report: Report) -> str:
     findings, then for each changed item the places outside the pull request that use it (file, line, how),
     the files whose other code changed with the modules that use them, the tests to run, the tests changed
     with their code, the parts not checked and the content hash of each changed file. For a reviewing agent:
-    every `look` line is a place to open, every `run-test` line a test to run, every `test-case` line a case
-    the test reports hold of such a test (or a test function of it that they do not hold)."""
+    every `look` line is a place to open, every `run-test` line a test to run, every `required-test` line a
+    test the manifest of the repository requires for this change, every `test-case` line a case the test
+    reports hold of such a test (or a test function of it that they do not hold)."""
     outcome, execution, reasons = result(report)
     lines = [f"(review-plan :schema {PLAN_SCHEMA} :result {outcome} :execution {execution} :base {report.base} :head {report.head} "
              f":wingbox {_q(report.version)} :hops {report.hops}{_tree_keys(report.tree)})"]
@@ -474,8 +541,21 @@ def build_plan(report: Report) -> str:
         known = recorded.get(test.shown)
         proof = "none" if report.test_cases is None or known is None else f"{known.status} :cases {known.cases}{_case_counts(known)}"
         lines.append(f"(run-test {_q(test.shown)} :uses {_atom(test.uses) if test.by_item else _q(test.uses)} :evidence {proof})")
-    lines += [f"(test-case {_q(test.shown)} {_q(case.where)} {_q(case.name)} :status {case.status})"
-              for test in tests_to_run(report) if test.shown in recorded for case in recorded[test.shown].records]
+    needed = required_evidence(report)
+    for index, wanted in enumerate(report.required_tests):
+        proof = "none" if needed is None else f"{needed[index].status} :cases {needed[index].cases}{_case_counts(needed[index])}"
+        lines.append(f"(required-test {_q(wanted.test)} :group {_atom(wanted.group)} :evidence {proof})")
+    if report.tests_manifest is not None:
+        read = report.tests_manifest
+        if read.source != "none":
+            lines.append(f"(required-tests {_q(read.path)} :from {read.source}{f' :commit {read.commit}' if read.commit else ''} :sha256 {read.sha256})")
+        lines += [f"(required-tests-error {_q(read.path)} :reason {_q(error)})" for error in read.errors]
+    if report.test_cases is not None:
+        lines.append(f"(tests :evidence {tests_summary(report)})")
+    case_lines = [f"(test-case {_q(item.test)} {_q(case.where)} {_q(case.name)} :status {case.status})"
+                  for item in (*(recorded[test.shown] for test in tests_to_run(report) if test.shown in recorded), *(needed or ()))
+                  for case in item.records]
+    lines += list(dict.fromkeys(case_lines))     # a test that is to run and required has its cases once
     lines += [f"(test-report {_q(read.path)} :sha256 {read.sha256} :cases {read.cases})" for read in report.test_reports]
     lines += [f"(test-report-error {_q(path)} :reason {_q(reason)})" for path, reason in report.test_report_errors]
     lines += [f"(test-changed {_q(test)} :tests {_q(source)})" for test, source in report.tests_changed]
@@ -508,7 +588,7 @@ def _tree_keys(tree: Optional[Tree]) -> str:
     return f" :tree {tree.relation}" if not tree.commit else f" :checked {tree.commit} :tree {tree.relation}"
 
 
-_PLAN_WORK = ("(finding ", "(look ", "(look-module ", "(run-test ", "(test-changed ")
+_PLAN_WORK = ("(finding ", "(look ", "(look-module ", "(run-test ", "(required-test ", "(test-changed ")
 
 
 def _build_failed(report: Report) -> bool:
@@ -534,7 +614,7 @@ def build_comment(report: Report, full: bool = False) -> str:
               "Built and checked on the runner, without a language model; no code left it.</sub>")
     if not needs_comment(report):
         return "\n".join([MARKER, "**Wingbox**: no source module outside the tests changed in this pull request; "
-                          "nothing to check.", "", footer, ""])
+                          "nothing to check.", "", *_required_lines(report, full), footer, ""])
     problem = ""
     if report.tool_errors:
         # A failed command leaves answers empty, and an empty answer must not read as "nothing uses this".
@@ -653,6 +733,9 @@ def build_comment(report: Report, full: bool = False) -> str:
             if report.test_report_errors:
                 lines += ["Test reports that gave no cases: " + "; ".join(f"{_code(path)} ({reason})" for path, reason in report.test_report_errors)
                           + ".", ""]
+    elif report.test_cases is not None:
+        lines += ["Tests that use what changed: none found." + ("" if report.required_tests else " The test reports say nothing about this change."), ""]
+    lines += _required_lines(report, full)
     if report.tests_changed:
         pairs = sorted(report.tests_changed) if full else sorted(report.tests_changed)[:LIST_LIMIT]
         rest = f"; {len(report.tests_changed) - len(pairs)} more" if len(report.tests_changed) > len(pairs) else ""

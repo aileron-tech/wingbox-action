@@ -49,7 +49,7 @@ import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))   # the modules next to this file, however it is loaded
 
@@ -63,8 +63,8 @@ from wingbox_facts import (  # noqa: E402,F401
 )
 from wingbox_report import (  # noqa: E402,F401
     COMMENT_LIMIT, FACADE_FILES, FAIL_ON, FOLDER_LIMIT, LIST_LIMIT, MAP_ARTIFACT, SUMMARY_LIMIT, build_comment, build_plan,
-    changed_tests, cut, evidence_counts, exit_status, is_facade, is_parent, is_test, needs_comment, outputs, result, test_evidence,
-    tests_status, tests_to_run, untouched_count, uses,
+    changed_tests, cut, evidence_counts, exit_status, holds_source, is_facade, is_parent, is_test, manifest_errors, needs_comment, outputs,
+    required_evidence, result, test_evidence, tests_status, tests_summary, tests_to_run, untouched_count, uses,
 )
 
 # Wingbox commands that ended abnormally in this run: the result is then UNKNOWN, never a pass.
@@ -326,13 +326,54 @@ def go_test_functions(root: str, tests: list[str], cases: list[wingbox_tests.Cas
     return tuple(found)
 
 
+def read_manifest(root: str, path: str, base: str) -> Optional[wingbox_tests.Manifest]:
+    """The manifest of required tests: the file at path (from the root of the repository; "" for the default
+    place) as the base commit holds it, so that a change cannot drop a requirement it is judged by; when the
+    base has none, the file of the checkout. None when the default place holds none; a path that was given
+    and is nowhere, or that leaves the repository, is an error of the manifest."""
+    given = path.strip().replace("\\", "/")
+    name = given or wingbox_tests.MANIFEST_PATH
+    if os.path.isabs(name) or ".." in name.split("/"):
+        return wingbox_tests.Manifest(name, "none", "", "", (), ("the path leaves the repository",))
+    data: Optional[bytes] = None
+    source = "none"
+    if base:
+        done = subprocess.run(["git", "cat-file", "blob", f"{base}:{name}"], cwd=root, capture_output=True)
+        if done.returncode == 0:
+            data, source = done.stdout, "base"
+    if data is None:
+        try:
+            data, source = (Path(root) / name).read_bytes(), "head"
+        except OSError:
+            if not given:
+                return None
+            return wingbox_tests.Manifest(name, "none", "", "", (), ("the file is not in the base commit and not in the checkout",))
+    try:
+        groups, errors = wingbox_tests.parse_manifest(data.decode("utf-8-sig"))
+    except UnicodeDecodeError as error:
+        groups, errors = (), (f"not UTF-8 text: {error.reason}",)
+    return wingbox_tests.Manifest(name, source, base if source == "base" else "", hashlib.sha256(data).hexdigest(), groups, errors)
+
+
+def merge_base(root: str, report: Report) -> str:
+    """The commit the change is compared with: the merge base of the base and the head; "" when git has none."""
+    done = _run(["git", "merge-base", report.base, "HEAD" if report.head == WORKING_TREE else report.head], root)
+    return done.stdout.strip() if done.returncode == 0 else ""
+
+
 def with_test_results(report: Report, env: Any, root: str) -> Report:
-    """The report with the test reports the job hands over: the patterns of WINGBOX_TEST_RESULTS (one per
-    line), looked for under WINGBOX_TEST_RESULTS_ROOT, else under the repository."""
+    """The report with the test reports the job hands over (the patterns of WINGBOX_TEST_RESULTS, one per
+    line, looked for under WINGBOX_TEST_RESULTS_ROOT, else under the repository) and with the tests the
+    manifest of the repository requires for this change (WINGBOX_REQUIRED_TESTS, else the default place)."""
     patterns = [p.strip() for p in env.get("WINGBOX_TEST_RESULTS", "").splitlines() if p.strip()]
     cases, reports, errors = read_test_results(env.get("WINGBOX_TEST_RESULTS_ROOT") or root, patterns)
-    functions = go_test_functions(root, [test.shown for test in tests_to_run(report)], list(cases)) if cases else ()
-    return dataclasses.replace(report, test_cases=cases, test_reports=reports, test_report_errors=errors, test_functions=functions)
+    manifest = read_manifest(root, env.get("WINGBOX_REQUIRED_TESTS", ""), merge_base(root, report))
+    required = (wingbox_tests.required_for(manifest.groups, [changed.path for changed in report.changed] + list(report.skipped))
+                if manifest is not None else ())
+    names = [test.shown for test in tests_to_run(report)] + [item.test for item in required]
+    functions = go_test_functions(root, names, list(cases)) if cases else ()
+    return dataclasses.replace(report, test_cases=cases, test_reports=reports, test_report_errors=errors, test_functions=functions,
+                               tests_manifest=manifest, required_tests=required)
 
 
 def copy_map(root: str, folder: str) -> str:
@@ -373,14 +414,28 @@ def post_comment(body: str, repository: str, number: int, token: str, api: str, 
     return f"created comment {created.get('id')}"
 
 
-def tests_failed(report: Report, env: Any) -> int:
-    """1, with the reason said, when WINGBOX_REQUIRE_TESTS is true and a test to run has no passing record."""
-    status = tests_status(report, env.get("WINGBOX_REQUIRE_TESTS", "false") == "true")
-    if status:
-        found = test_evidence(report)
-        missing = len(tests_to_run(report)) if found is None else sum(1 for item in found if item.status != wingbox_tests.PASSED)
-        print(f"Wingbox: require-tests: {missing} test(s) that use what changed have no passing record"
-              + (" (no test report was given)" if found is None else " in the test reports given"))
+def tests_failed(report: Report, env: Any, say: Callable[[str], None] = print) -> int:
+    """1, with each reason said, when WINGBOX_REQUIRE_TESTS is true or strict and a test to run or a required
+    test has no passing record, or the manifest of required tests could not be read; with strict also when no
+    test was found for a change that holds source code. A change no test was found for is said in any case."""
+    wanted = env.get("WINGBOX_REQUIRE_TESTS", "false")
+    if wanted not in ("true", "strict"):
+        return 0
+    status = tests_status(report, True, wanted == "strict")
+    found, needed = test_evidence(report), required_evidence(report)
+    given = " (no test report was given)" if found is None else " in the test reports given"
+    manifest = report.tests_manifest
+    if manifest is not None and manifest.errors:
+        say(f"Wingbox: require-tests: the manifest of required tests {manifest.path} could not be read: {'; '.join(manifest.errors)}")
+    missing = len(tests_to_run(report)) if found is None else sum(1 for item in found if item.status != wingbox_tests.PASSED)
+    if missing:
+        say(f"Wingbox: require-tests: {missing} test(s) that use what changed have no passing record{given}")
+    lacking = len(report.required_tests) if needed is None else sum(1 for item in needed if item.status != wingbox_tests.PASSED)
+    if lacking and manifest is not None:
+        say(f"Wingbox: require-tests: {lacking} required test(s) of {manifest.path} have no passing record{given}")
+    if not tests_to_run(report) and not report.required_tests and not manifest_errors(report):
+        say("Wingbox: require-tests: no test that uses what changed was found"
+            + (", and the change holds source code (require-tests is strict)" if status else ""))
     return status
 
 

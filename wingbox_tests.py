@@ -3,10 +3,12 @@
 The check never runs a test. A job that ran its tests before the check hands over the report files the test
 runner wrote (the `test-results` input); this module reads their test cases and says, for each test the
 check names, which cases the reports hold of it and how each ended. A test is passed only when every case
-recorded for it passed. Pure, standard library only: the files are read by wingbox_pr.
+recorded for it passed. It also reads the manifest of required tests: the tests a change of given paths must
+pass, whatever the graph finds. Pure, standard library only: the files are read by wingbox_pr.
 """
 from __future__ import annotations
 
+import fnmatch
 import re
 import xml.etree.ElementTree as ElementTree
 from dataclasses import dataclass
@@ -16,6 +18,7 @@ PASSED, FAILED, SKIPPED, NO_RECORD = "passed", "failed", "skipped", "no-record"
 PARTIAL = "partial"                # of a test file: a case passed, and another was skipped or did not run
 STATUSES = (PASSED, FAILED, SKIPPED, NO_RECORD)    # of a case, in the order they are counted
 SIZE_LIMIT = 64 * 1024 * 1024      # bytes of one report file; a larger one is refused
+MANIFEST_PATH = ".wingbox/required-tests.yaml"   # the manifest of required tests, from the root of the repository
 # A file Wingbox reads as source code, by its ending.
 SOURCE_FILE = re.compile(r"\.(?:py|pyi|ts|tsx|mts|cts|js|jsx|mjs|cjs|rs|cs|java|kt|go|rb|php|dart|pas|pp)$")
 
@@ -55,6 +58,32 @@ class Evidence:
     status: str       # PASSED, FAILED, SKIPPED, PARTIAL or NO_RECORD
     cases: int        # the recorded cases that belong to it
     records: tuple[CaseResult, ...] = ()   # each of those cases, then the test functions of the file without a record
+
+
+@dataclass(frozen=True)
+class Group:
+    """A group of the manifest: the tests a change that touches one of the paths must pass."""
+    name: str
+    paths: tuple[str, ...]    # globs, folders ending in `/`, or modules (a file without its ending)
+    tests: tuple[str, ...]    # test files, or `<file, class or Go folder>::<case>`
+
+
+@dataclass(frozen=True)
+class Manifest:
+    """The manifest of required tests as it was read."""
+    path: str                 # from the root of the repository
+    source: str               # "base": the base commit holds it; "head": only the checked files do; "none": not found
+    commit: str               # the base commit it was read from; "" otherwise
+    sha256: str               # of its bytes; "" when not found
+    groups: tuple[Group, ...] = ()
+    errors: tuple[str, ...] = ()   # why it gives no groups: it is refused as a whole
+
+
+@dataclass(frozen=True)
+class Required:
+    """A test the manifest requires for this change, with the group that names it."""
+    group: str
+    test: str
 
 
 def parse_junit(data: bytes) -> list[Case]:
@@ -171,8 +200,20 @@ def _status(statuses: list[str]) -> str:
     return PARTIAL if PASSED in recorded else SKIPPED
 
 
+CASE_MARK = "::"    # in a required test: `<file, class or Go folder>::<case>`
+
+
+def _is_case(where: str, name: str, case: Case) -> bool:
+    """Whether a recorded case is the case `name` of `where`: a test file, a class or suite name as the
+    report writes it, or the folder of a Go package. The name with parameters (`name[1]`, pytest) or as a
+    subtest (`name/sub`, Go) counts too."""
+    there = belongs(where, case) or where in (case.classname, case.suite) or _in_package(_path(where), case)
+    return there and (case.name == name or case.name.startswith((name + "[", name + "/")))
+
+
 def evidence(tests: list[str], cases: list[Case], functions: Optional[Mapping[str, tuple[str, ...]]] = None) -> tuple[Evidence, ...]:
-    """For each test to run, the recorded cases that belong to it and the status they give it (see _status).
+    """For each test (a test to run, or a required test), the recorded cases that belong to it and the
+    status they give it (see _status). A test named `<where>::<case>` gets the cases of that name there.
 
     functions: for a Go test file, by its name among the tests, the functions the file holds. A record of a
     Go package counts for the file that holds its test function, and a test function of the file that no
@@ -180,6 +221,11 @@ def evidence(tests: list[str], cases: list[Case], functions: Optional[Mapping[st
     package record."""
     found = []
     for test in tests:
+        if CASE_MARK in test:
+            where, name = test.rsplit(CASE_MARK, 1)
+            one = [CaseResult(case.classname or case.file or case.suite, case.name, case.status) for case in cases if _is_case(where, name, case)]
+            found.append(Evidence(test, _status([record.status for record in one]), len(one), tuple(one)))
+            continue
         mine = (functions or {}).get(test)
         matched = [case for case in cases if belongs(test, case) or (mine is not None and in_go_file(test, mine, case))]
         records = [CaseResult(case.classname or case.file or case.suite, case.name, case.status) for case in matched]
@@ -189,3 +235,127 @@ def evidence(tests: list[str], cases: list[Case], functions: Optional[Mapping[st
                         if _GO_TEST_FUNCTION.match(name) and name != "TestMain" and name not in ran]
         found.append(Evidence(test, _status([record.status for record in records]), len(matched), tuple(records)))
     return tuple(found)
+
+
+# ---------------------------------------------------------------------------
+# The manifest of required tests
+# ---------------------------------------------------------------------------
+# A YAML file in a small subset, so that it needs no YAML library and every YAML reader gives the same:
+#
+#     billing:                  a group, at the start of a line
+#       paths:                  the paths it applies to
+#         - "src/billing/**"    one item per line, plain or in quotes
+#       tests:                  the tests a change of those paths must pass
+#         - tests/test_invoice.py
+#         - tests/test_billing.py::test_total
+#
+# Blank lines and lines that start with `#` are skipped. Anything else refuses the whole file.
+
+_GROUP = re.compile(r"^([A-Za-z0-9][A-Za-z0-9_.-]*):$")
+_KEY = re.compile(r"^([A-Za-z0-9_-]+):(.*)$")
+_PLAIN = re.compile(r"^[A-Za-z0-9./_]")
+_YAML_WORDS = frozenset({"true", "false", "null", "yes", "no", "on", "off", "y", "n"})
+MANIFEST_KEYS = ("paths", "tests")
+
+
+def _item(text: str) -> tuple[str, str]:
+    """(the value of a list item, why it is refused or "")."""
+    if text[:1] in "\"'":
+        quote = text[0]
+        if len(text) < 2 or not text.endswith(quote) or quote in text[1:-1]:
+            return "", "a quote is not closed, or the value holds its own quote"
+        if "\\" in text:
+            return "", "no backslash in a quoted value"
+        return (text[1:-1], "") if text[1:-1] else ("", "an empty value")
+    if " #" in text:
+        return "", "a comment must be on a line of its own"
+    if not _PLAIN.match(text) or ": " in text or text.endswith(":") or text.lower() in _YAML_WORDS or not text.strip("0123456789._"):
+        return "", "quote this value (a plain value starts with a letter, a digit, `.`, `/` or `_` and is not a YAML word or number)"
+    return text, ""
+
+
+def parse_manifest(text: str) -> tuple[tuple[Group, ...], tuple[str, ...]]:
+    """(the groups of a manifest of required tests, the errors). A manifest with an error gives no group:
+    what a change must pass is then not known, which is never read as "nothing is required"."""
+    errors: list[str] = []
+    order: list[str] = []
+    lines_of: dict[str, int] = {}
+    lists: dict[str, dict[str, list[str]]] = {}
+    group = ""
+    key = ""
+    key_indent = 0
+    for number, raw in enumerate(text.split("\n"), start=1):
+        line = raw.rstrip("\r").rstrip()
+        body = line.lstrip(" ")
+        if not body or body.startswith("#"):
+            continue
+        indent = len(line) - len(body)
+        if body.startswith("\t") or "\t" in line[:indent]:
+            errors.append(f"line {number}: a tab in the indentation; use spaces")
+            continue
+        if indent == 0 and not body.startswith("- "):
+            named = _GROUP.match(body)
+            if named is None:
+                errors.append(f"line {number}: not a group, a key or an item: a group is a name and a colon on its own line")
+                group = key = ""
+                continue
+            group, key = named.group(1), ""
+            if group in lists:
+                errors.append(f"line {number}: group `{group}` is named twice")
+                continue
+            order.append(group)
+            lines_of[group] = number
+            lists[group] = {}
+            continue
+        if body.startswith("- ") or body == "-":
+            if not group or not key or indent < key_indent:
+                errors.append(f"line {number}: an item outside `paths` and `tests`")
+                continue
+            value, problem = _item(body[1:].strip())
+            if problem:
+                errors.append(f"line {number}: {problem}")
+            lists[group][key].append(value)     # a refused item still fills its list: the error above is the one to read
+            continue
+        found = _KEY.match(body)
+        if found is None:
+            errors.append(f"line {number}: not a group, a key or an item")
+            continue
+        if not group:
+            errors.append(f"line {number}: a key outside a group")
+            continue
+        name, rest = found.group(1), found.group(2).strip()
+        key = ""
+        if name not in MANIFEST_KEYS:
+            errors.append(f"line {number}: unknown key `{name}`: a group has `paths` and `tests`")
+        elif rest:
+            errors.append(f"line {number}: write the items of `{name}` on the lines below, one `- item` each")
+        elif name in lists[group]:
+            errors.append(f"line {number}: `{name}` is given twice in group `{group}`")
+        else:
+            key, key_indent = name, indent
+            lists[group][name] = []
+    for name in order:
+        errors += [f"line {lines_of[name]}: group `{name}` has no {wanted}" for wanted in MANIFEST_KEYS if not lists[name].get(wanted)]
+    if errors:
+        return (), tuple(errors)
+    return tuple(Group(name, tuple(lists[name]["paths"]), tuple(lists[name]["tests"])) for name in order), ()
+
+
+def _touches(pattern: str, path: str) -> bool:
+    """Whether a changed file is one a group applies to: a glob as the `paths` input takes it (`*` crosses
+    folders), a folder ending in `/`, or a module (the file without its ending)."""
+    path = _path(path)
+    if pattern.endswith("/"):
+        return path.startswith(pattern)
+    return fnmatch.fnmatchcase(path, pattern) or fnmatch.fnmatchcase(SOURCE_FILE.sub("", path), pattern)
+
+
+def required_for(groups: tuple[Group, ...], changed: list[str]) -> tuple[Required, ...]:
+    """The tests the manifest requires for a change of these files: those of every group one of whose paths
+    a changed file matches, each test once, under the first group that names it."""
+    found: dict[str, Required] = {}
+    for group in groups:
+        if any(_touches(pattern, path) for pattern in group.paths for path in changed):
+            for test in group.tests:
+                found.setdefault(test, Required(group.name, test))
+    return tuple(found.values())
