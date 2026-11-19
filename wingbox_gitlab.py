@@ -184,6 +184,10 @@ def main() -> int:
     if env.get("WINGBOX_TEST_STEP_OUTCOME", "") and pr.step_outcome(env) is None:
         print(f"ERROR: {pr.OUTCOME_ERROR}, not {env.get('WINGBOX_TEST_STEP_OUTCOME')!r} (WINGBOX_TEST_STEP_OUTCOME)")
         return 2
+    mode = pr.policy_mode(env, fail_on)
+    if mode is None:
+        print(f"ERROR: WINGBOX_POLICY_CHANGE must be one of {', '.join(pr.wingbox_policy.MODES)}, not {env.get('WINGBOX_POLICY_CHANGE')!r}")
+        return 2
     chosen = commits(env)
     if isinstance(chosen, Skip):
         # The job's dotenv report needs its file also when there is nothing to compare.
@@ -196,8 +200,8 @@ def main() -> int:
         return 2
     patterns = [p.strip() for p in env.get("WINGBOX_PATHS", "").splitlines() if p.strip()]
     report = pr.collect(root, chosen.base, chosen.head, int(env.get("WINGBOX_HOPS", "2")), patterns, env.get("WINGBOX_VERSION", "?"),
-                        ignore=_inside(root, out))
-    report = pr.with_test_results(report, env, root)
+                        ignore=_inside(root, out), policy_files=pr.wingbox_policy.named(env))
+    report = pr.with_test_results(pr.dataclasses.replace(report, policy_mode=mode), env, root)
     comment = in_gitlab_words(pr.cut(pr.build_comment(report), pr.COMMENT_LIMIT))
     values = pr.outputs(report)
     outcome, execution, reasons = values["result"], values["execution"], values["reasons"]
@@ -219,7 +223,7 @@ def main() -> int:
                 print(post_note(comment, env["CI_API_V4_URL"], env["CI_PROJECT_ID"], merge_request, api_call(token), pr.needs_comment(report)))
             except (urllib.error.URLError, KeyError, ValueError) as error:
                 print(f"WARNING: could not write the merge request note ({error}); the report is in the job log and in {out}")
-    return max(pr.exit_status(report, fail_on), pr.tests_failed(report, env))
+    return max(pr.exit_status(report, fail_on), pr.tests_failed(report, env), pr.policy_failed(report))
 
 
 if __name__ == "__main__":

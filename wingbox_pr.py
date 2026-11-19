@@ -11,7 +11,9 @@ with its history. It builds the code graph of the head (and of the base, in a gi
   (`wingbox usages`);
 - the blast radius as a Mermaid diagram inside the report;
 - the layer, capability and pattern findings of `wingbox boundaries` that the head has and the
-  base has not: the findings the pull request introduces;
+  base has not: the findings the pull request introduces. When the pull request edits a file the
+  check is judged by (the baseline, the rules, the workflow), the findings are also taken with these
+  files as the base has them, in a second temporary worktree;
 - the parts `wingbox boundaries` could not check, said as such.
 
 Run by hand it checks a working directory before a commit:
@@ -55,16 +57,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))   # the modules next to
 
 import wingbox_changes  # noqa: E402
 import wingbox_evidence  # noqa: E402
+import wingbox_policy  # noqa: E402
 import wingbox_tests  # noqa: E402
 from wingbox_facts import (  # noqa: E402,F401
     BLOCKING_HEADS, FINDING_HEADS, MARKER, WORKING_TREE, ChangedFile, ChangedItem, Dependent, Finding, Item, NotChecked, Report, Route, Site,
-    Tree, User, checked_modules, dependents, findings, folder_of, go_functions, introduced, items, module_of, parse_line, parse_route, relation,
-    selected, untouched, use_sites, users,
+    Tree, User, checked_modules, dependents, findings, folder_of, go_functions, introduced, items, judged, known, module_of, parse_line,
+    parse_route, relation, selected, untouched, use_sites, users,
 )
 from wingbox_report import (  # noqa: E402,F401
     COMMENT_LIMIT, FACADE_FILES, FAIL_ON, FOLDER_LIMIT, LIST_LIMIT, MAP_ARTIFACT, SUMMARY_LIMIT, build_comment, build_plan,
-    changed_tests, cut, evidence_counts, exit_status, holds_source, is_facade, is_parent, is_test, manifest_errors, needs_comment, outputs,
-    required_evidence, result, test_evidence, tests_status, tests_summary, tests_to_run, untouched_count, uses,
+    changed_tests, cut, deleted_tests, evidence_counts, exit_status, holds_source, is_facade, is_parent, is_test, manifest_errors,
+    needs_comment, outputs, required_evidence, result, test_evidence, tests_status, tests_summary, tests_to_run, untouched_count, uses,
 )
 
 # Wingbox commands that ended abnormally in this run: the result is then UNKNOWN, never a pass.
@@ -102,7 +105,9 @@ def _git(cwd: str, *args: str) -> str:
 def tree_state(root: str, head: str, ignore: tuple[str, ...]) -> Tree:
     """The commit of the working folder of root, how it relates to the head named, and the files that are not
     as in that commit: changed tracked files and untracked source files, git's ignore rules applied. `.wingbox/` and
-    the folders of ignore (where this run writes) do not count. Asked before the first build."""
+    the folders of ignore (where this run writes) do not count, but the policy files of `.wingbox/` do, also
+    when git ignores them: a baseline or a rule file that is in no commit would judge the check. Asked before
+    the first build."""
     checked = _git(root, "rev-parse", "HEAD").strip()
     named = _git(root, "rev-parse", f"{head}^{{commit}}").strip()
     parents = tuple(_git(root, "rev-list", "--parents", "-n", "1", "HEAD").split()[1:])
@@ -119,7 +124,16 @@ def tree_state(root: str, head: str, ignore: tuple[str, ...]) -> Tree:
         # change the graph.
         if not entry.startswith("??") or wingbox_tests.SOURCE_FILE.search(entry[3:]):
             differs.append(entry[3:])
+    differs += [path for _state, path in _policy_on_disk(root)]
     return Tree(checked, relation(checked, named, parents), tuple(sorted(differs)))
+
+
+def _policy_on_disk(root: str) -> list[tuple[str, str]]:
+    """(git's two status letters, path) of each policy file of `.wingbox/` that is on disk not as in the commit
+    of the working folder: edited, new, or new and ignored by git (`!!`)."""
+    policy_files = [f":(top){path}" for path in wingbox_policy.FIXED]
+    listed = _git(root, "status", "--porcelain", "--untracked-files=all", "--ignored", "-z", "--", *policy_files).split("\0")
+    return [(entry[:2], entry[3:]) for entry in listed if len(entry) >= 4]
 
 
 def commit_hashes(root: str, commit: str, paths: list[str]) -> list[tuple[str, str]]:
@@ -136,6 +150,81 @@ def commit_hashes(root: str, commit: str, paths: list[str]) -> list[tuple[str, s
 def _boundaries(root: str) -> list[str]:
     _wingbox(root, "build", root)
     return _wingbox(root, "boundaries")
+
+
+_GRAPH_FACTS = ("(arch-part ", "(arch-declared-unread ", "(arch-known ", "(capability-known ")
+
+
+def _graph_facts(root: str) -> list[str]:
+    """The lines of the graph Wingbox built in root that name the rule files it read; none without a graph."""
+    try:
+        with open(Path(root) / ".wingbox" / "index.sexp", encoding="utf-8", errors="replace") as stream:
+            return [line.rstrip("\n") for line in stream if line.startswith(_GRAPH_FACTS)]
+    except OSError:
+        return []
+
+
+def _blob(root: str, commit: str, path: str) -> Optional[bytes]:
+    """The content of a file in a commit; None when the commit does not have it."""
+    done = subprocess.run(["git", "cat-file", "blob", f"{commit}:{path}"], cwd=root, capture_output=True)
+    return done.stdout if done.returncode == 0 else None
+
+
+def _text(root: str, commit: Optional[str], path: str) -> Optional[str]:
+    """The text of a file in a commit, or with no commit as it is on disk under root; None when it is absent."""
+    if commit is not None:
+        data = _blob(root, commit, path)
+    else:
+        try:
+            data = (Path(root) / path).read_bytes()
+        except OSError:
+            data = None
+    return None if data is None else data.decode("utf-8", errors="replace").replace("\r\n", "\n")
+
+
+def policy_base(root: str, merge_base: str, head: str, tree: Tree) -> str:
+    """The commit whose policy files are the base's. The merge base; when the checkout is the merge of the
+    head into the base, the base as merged (the other parent), so a policy change the base made meanwhile
+    counts as the base's."""
+    if tree.relation != "merge":
+        return merge_base
+    named = _git(root, "rev-parse", f"{head}^{{commit}}").strip()
+    others = [parent for parent in _git(root, "rev-list", "--parents", "-n", "1", "HEAD").split()[1:] if parent != named]
+    return others[0] if len(others) == 1 else merge_base
+
+
+def _remove_worktree(root: str, worktree: str) -> None:
+    _git(root, "worktree", "remove", "--force", worktree)
+
+
+def _judge_tree(root: str, worktree: str, on_disk: list[str], policy_files: list[str], base: str) -> None:
+    """Make worktree a new git worktree that holds the files of the change with the policy files of the base.
+
+    It starts as the commit of root's working folder. on_disk: for a check of a working directory, the changed
+    and the new files, taken as they are on disk (a deleted one is removed). policy_files: the policy files
+    the change edits, each written as commit base has it, or removed when base has none. The checkout of the
+    user is only read. A path that a symbolic link of the tree leads out of the worktree is not written: it is
+    recorded as a tool error, so the result is UNKNOWN."""
+    _git(root, "worktree", "add", "--detach", worktree, "HEAD")
+    top = Path(worktree).resolve()
+
+    def place(path: str, data: Optional[bytes]) -> None:
+        target = Path(worktree) / path
+        folder = next(parent for parent in target.parents if parent.exists())
+        if top not in (folder.resolve(), *folder.resolve().parents) or target.is_symlink():
+            TOOL_ERRORS.append(f"a link leads {path} out of the checkout")
+        elif data is not None:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        elif target.is_file():
+            target.unlink()
+
+    for path in on_disk:
+        source = Path(root) / path
+        if not source.is_symlink() and not (Path(worktree) / path).is_symlink():   # a link itself is left as the commit has it
+            place(path, source.read_bytes() if source.is_file() else None)
+    for path in policy_files:
+        place(path, _blob(root, base, path))
 
 
 ITEM_QUERIES = 60   # items whose users are asked for in one pull request; files beyond that are taken as a whole
@@ -216,12 +305,32 @@ def changed_items(root: str, changed: ChangedFile, hunks: tuple[wingbox_changes.
     return tuple(sorted(found, key=lambda item: item.line)), other, budget
 
 
-def collect(root: str, base: str, head: str, hops: int, patterns: list[str], version: str, ignore: tuple[str, ...] = ()) -> Report:
+DELETED_TEST_QUERIES = 40   # changed source files asked about on the base when the change deletes a test file
+
+
+def _base_users(base_tree: str, deleted: list[str], names: list[str]) -> dict[str, list[Dependent]]:
+    """Per changed source file that the base has, its direct dependents in the graph of the base: asked only
+    when the change deletes a test file, to say which code that test used."""
+    if not any(is_test(path) for path in deleted):
+        return {}
+    gone = set(deleted)
+    sources = [path for path in names if path not in gone and not is_test(path) and wingbox_tests.SOURCE_FILE.search(path)
+               and (Path(base_tree) / path).is_file()]
+    return {path: dependents(_wingbox(base_tree, "impact", path, "1", "--sexp", "--all"))[1] for path in sources[:DELETED_TEST_QUERIES]}
+
+
+def collect(root: str, base: str, head: str, hops: int, patterns: list[str], version: str, ignore: tuple[str, ...] = (),
+            policy_files: Optional[dict[str, str]] = None) -> Report:
     """Build the graphs of head (root) and base (a worktree) and gather the report's data.
 
     head is a commit, or WORKING_TREE: then the change is the merge base of base and HEAD against the files of
     root as they are on disk, uncommitted and untracked ones included, and nothing is committed. ignore: the
-    folders of root this run writes into, which do not count as a difference from the commit."""
+    folders of root this run writes into, which do not count as a difference from the commit. policy_files: the
+    policy files the settings of the run name, with their kind (wingbox_policy.named).
+
+    When the change edits a file the check is judged by, the findings are taken a second time, in a worktree
+    that holds the files of the change with those policy files as the base has them (`_judge_tree`): a break
+    that only the change's own edit accepts is then introduced."""
     working = head == WORKING_TREE
     tree = Tree("", WORKING_TREE) if working else tree_state(root, head, ignore)
     merge_base = _git(root, "merge-base", base, "HEAD" if working else head).strip()
@@ -231,17 +340,40 @@ def collect(root: str, base: str, head: str, hops: int, patterns: list[str], ver
     else:
         untracked = []
         names = [line for line in _git(root, "diff", "--name-only", f"{base}...{head}").splitlines() if line]
+    deleted = [line for line in _git(root, "diff", "--name-only", "--diff-filter=D", merge_base if working else f"{base}...{head}").splitlines()
+               if line]
     changed_paths, skipped = selected(names, patterns)
     head_lines = _boundaries(root)
     head_findings, not_checked = findings(head_lines)
+    judging = policy_base(root, merge_base, head, tree)
     with tempfile.TemporaryDirectory() as tmp:
         worktree = os.path.join(tmp, "base")
         _git(root, "worktree", "add", "--detach", worktree, merge_base)
         try:
             base_findings, _ = findings(_boundaries(worktree))
+            declared = wingbox_policy.declared_files(_graph_facts(worktree)) | wingbox_policy.declared_files(_graph_facts(root))
+            tests_deleted = deleted_tests(deleted, _base_users(worktree, deleted, names))
         finally:
-            _git(root, "worktree", "remove", "--force", worktree)
-    new, resolved = introduced(base_findings, head_findings)
+            _remove_worktree(root, worktree)
+        # The policy files are looked for among all changed files: the paths filter does not hide a change of them.
+        # In a working directory git may ignore one that is on disk; it judges the check all the same.
+        on_disk = [*names, *(path for state, path in _policy_on_disk(root) if state == "!!")] if working else []
+        by_setting = policy_files or {}
+        texts = {path: (_text(root, judging, path), _text(root, None if working else head, path))
+                 for path in wingbox_policy.candidates(on_disk if working else names, declared, by_setting)}
+        policy = wingbox_policy.policy_changes(texts, declared, by_setting)
+        rules = [change.path for change in policy if change.kind in wingbox_policy.JUDGING]
+        with_base_policy: Optional[list[Finding]] = None
+        if rules:
+            worktree = os.path.join(tmp, "judge")
+            try:
+                _judge_tree(root, worktree, on_disk, rules, judging)
+                with_base_policy, _ = findings(_boundaries(worktree))
+            finally:
+                if os.path.isdir(worktree):
+                    _remove_worktree(root, worktree)
+    new, own, resolved = judged(base_findings, head_findings, with_base_policy, known(head_lines))
+    entries = wingbox_policy.new_entries(*texts[wingbox_policy.BASELINE]) if wingbox_policy.BASELINE in texts else ()
     changed_modules = {module_of(path) for path in changed_paths}
     changed: list[ChangedFile] = []
     for path in changed_paths:
@@ -280,7 +412,9 @@ def collect(root: str, base: str, head: str, hops: int, patterns: list[str], ver
     final = tuple(final_list)
     return Report(version, hops, base, head, final, tuple(new), resolved, tuple(not_checked), tuple(skipped),
                   tests_changed=bent, tool_errors=tuple(dict.fromkeys(TOOL_ERRORS)), hashes=tuple(hashes),
-                  checked_modules=checked_modules(head_lines), skipped_languages=tuple(sorted(SKIPPED_LANGUAGES.items())), tree=tree)
+                  checked_modules=checked_modules(head_lines), skipped_languages=tuple(sorted(SKIPPED_LANGUAGES.items())), tree=tree,
+                  policy=policy, policy_base=judging if policy else "", self_accepted=tuple(own), baseline_entries=entries,
+                  tests_deleted=tests_deleted)
 
 
 def utc(seconds: float) -> str:
@@ -545,6 +679,23 @@ def tests_failed(report: Report, env: Any, say: Callable[[str], None] = print) -
     return status
 
 
+def policy_mode(env: Any, fail_on: str) -> Optional[str]:
+    """`policy-change` of the job: WINGBOX_POLICY_CHANGE, or without it `fail` with `fail-on: strict` and
+    `report` otherwise; None for a value that is neither."""
+    mode = env.get("WINGBOX_POLICY_CHANGE", "") or wingbox_policy.default_mode(fail_on)
+    return mode if mode in wingbox_policy.MODES else None
+
+
+def policy_failed(report: Report) -> int:
+    """1, with the reason said, when `policy-change` is `fail` and the change edits a file it is checked by."""
+    status = wingbox_policy.policy_status(report)
+    if status:
+        count = len(report.policy)
+        print(f"Wingbox: policy-change: this change edits {count} file{'' if count == 1 else 's'} it is checked by "
+              f"({', '.join(change.path for change in report.policy)}); `policy-change: report` leaves it to the reviewers")
+    return status
+
+
 def now() -> str:
     """The UTC time, as the evidence record writes it."""
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -627,6 +778,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     if step_outcome(env) is None:
         print(f"::error::{OUTCOME_ERROR}, not {env.get('WINGBOX_TEST_STEP_OUTCOME')!r}")
         return 2
+    mode = policy_mode(env, fail_on)
+    if mode is None:
+        print(f"::error::policy-change must be one of {', '.join(wingbox_policy.MODES)}, not {env.get('WINGBOX_POLICY_CHANGE')!r}")
+        return 2
     root, base, head, temp = settings(args, env, pull)
     root = os.path.abspath(root)
     os.makedirs(temp, exist_ok=True)
@@ -638,8 +793,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 2
     patterns = [p.strip() for p in env.get("WINGBOX_PATHS", "").splitlines() if p.strip()]
     upload_map = env.get("WINGBOX_UPLOAD_MAP", "false") == "true"
-    report = collect(root, base, head, int(env.get("WINGBOX_HOPS", "2")), patterns, env.get("WINGBOX_VERSION", "?"))
-    report = with_test_results(report, env, root)
+    report = collect(root, base, head, int(env.get("WINGBOX_HOPS", "2")), patterns, env.get("WINGBOX_VERSION", "?"),
+                     policy_files=wingbox_policy.named(env))
+    report = with_test_results(dataclasses.replace(report, policy_mode=mode), env, root)
     map_path = copy_map(root, temp) if upload_map else ""
     if upload_map and not map_path:
         print("::warning::no .wingbox/map.html to upload: wingbox build wrote no map")
@@ -672,7 +828,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         except (urllib.error.URLError, KeyError, ValueError) as error:
             # A pull request from a fork gets a read-only token: the summary still holds the report.
             print(f"::warning::could not write the pull request comment ({error}); the report is in the job summary")
-    return max(exit_status(report, fail_on), tests_failed(report, env))
+    return max(exit_status(report, fail_on), tests_failed(report, env), policy_failed(report))
 
 
 if __name__ == "__main__":

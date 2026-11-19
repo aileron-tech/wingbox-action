@@ -15,6 +15,9 @@ inputs:
   fail-on:
     description: "none, violations (a layer, capability or pattern violation introduced by the pull request), not-checked (a part that could not be checked) or strict (everything but a PASS or NOT_APPLICABLE result)."
     default: none
+  policy-change:
+    description: "fail or report: what a change of a file the check is judged by does (.wingbox/baseline.sexp, the rules of .wingbox/, a declared rule file, the workflow that runs the check, the required-tests manifest). fail: the job fails. report: the report names the change. Empty: fail with fail-on strict, else report. The findings are judged with these files as the base has them either way."
+    default: ""
   comment:
     description: Write the report as one comment on the pull request, updated on each push.
     default: "true"
@@ -74,6 +77,9 @@ outputs:
   not-checked-parts:
     description: Number of parts wingbox boundaries could not check.
     value: ${{ steps.check.outputs.not-checked-parts }}
+  policy-changed:
+    description: Number of files the check is judged by that the pull request edits (the baseline, the rules, the workflow that runs the check).
+    value: ${{ steps.check.outputs.policy-changed }}
   plan:
     description: Path of the review plan (S-expression lines) for a reviewing agent.
     value: ${{ steps.check.outputs.plan }}
@@ -138,6 +144,7 @@ runs:
         WINGBOX_VERSION: ${{ inputs.version }}
         WINGBOX_HOPS: ${{ inputs.hops }}
         WINGBOX_FAIL_ON: ${{ inputs.fail-on }}
+        WINGBOX_POLICY_CHANGE: ${{ inputs.policy-change }}
         WINGBOX_COMMENT: ${{ inputs.comment }}
         WINGBOX_UPLOAD_MAP: ${{ inputs.upload-map }}
         WINGBOX_PATHS: ${{ inputs.paths }}

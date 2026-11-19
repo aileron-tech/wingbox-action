@@ -63,6 +63,34 @@
 - `require-tests: strict`: as `true`, and a change of source code for which
   no test was found fails the job. With `true` such a change passes and the
   log says that no test was found.
+- A pull request can no longer accept its own violation
+  ([#18](https://github.com/aileron-tech/wingbox-action/issues/18)). The check
+  knows the files it is judged by: `.wingbox/baseline.sexp`, the rules
+  (`.wingbox/config.yaml`, `.wingbox/learned.sexp`, the layers
+  `.wingbox/decisions.sexp` sets), a rule file the project declares, the
+  workflow that runs the check and `.wingbox/required-tests.yaml`. When a pull
+  request edits the baseline or a rule file, the findings are also taken with
+  these files as the base has them (one more build, in a temporary worktree):
+  a break that only the pull request's own baseline entry or rule edit
+  accepts is a new finding, and the result is `FAIL`.
+- A new or changed baseline entry accepts its break only with `:owner`,
+  `:reason` and `:expires`; the report then lists the break under "Accepted
+  by this change itself". An edit of the rules accepts nothing in the pull
+  request that makes it.
+- The report has the section "This change edits what it is checked by", the
+  plan the lines `policy-changed`, `policy-of-base`, `baseline-entry` and
+  `accepted-by-change`, the evidence record the object `policy`, and there is
+  the output `policy-changed` (GitLab: `WINGBOX_POLICY_CHANGED`).
+- New input `policy-change` (GitLab: `WINGBOX_POLICY_CHANGE`): `fail` fails
+  the job when the pull request edits a policy file, `report` only reports
+  it. The default is `fail` with `fail-on: strict` and `report` otherwise, so
+  a job with `fail-on: strict` now fails on a pull request that edits one of
+  these files. The README describes the code owner setup that separates the
+  duties.
+- A test file deleted together with the code it tested is reported, like a
+  test changed together with its code (`test-deleted` in the plan).
+- The evidence record (`schema/wingbox-evidence-2.schema.json`) gains the
+  object `policy`.
 
 ### Fixes
 
@@ -77,6 +105,9 @@
   record now goes to the file that holds its test function (Wingbox lists the
   functions of each Go test file), a test function of the file that no report
   names is a case `no-record`, and Go tests named as modules are matched too.
+- A policy file of `.wingbox/` that is on disk but not as in the commit
+  checked (edited or written by an earlier step, also when git ignores it)
+  makes the result `UNKNOWN`; files of `.wingbox/` did not count before.
 
 ## 1.4.2 - 2026-11-19
 

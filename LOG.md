@@ -1,5 +1,55 @@
 # Log
 
+## 2026-11-19: a change is judged with the policy files of the base (issue #18)
+
+What changed
+
+- `wingbox_policy.py` (new, pure): the policy files (`FIXED`, the decisions log for the layers it sets, the
+  rule files a graph names through `arch-part :declared`, `arch-declared-unread`, `arch-known` and
+  `capability-known`, the workflow named by `GITHUB_WORKFLOW_REF` or `CI_CONFIG_PATH`, a manifest of required
+  tests named by `WINGBOX_REQUIRED_TESTS`, and any changed workflow file that names wingbox), `policy_changes`, `baseline_entries`, `new_entries`, `default_mode`,
+  `policy_status`, and the `policy` object of the record.
+- `wingbox_facts`: `Acceptance`, `PolicyChange`, `BaselineEntry`; `Finding.accepted`; `known` (what the head's
+  baseline accepts, from `violation-known` and `capability-violation-known`); `judged` (the findings of the
+  head under its own policy and under the base's against those of the base). `Report` gains `policy`,
+  `policy_mode`, `policy_base`, `self_accepted`, `baseline_entries`, `tests_deleted`.
+- `wingbox_pr.collect`: after the two builds it reads the rule files both graphs name, the two sides of each
+  candidate file, and, when the change edits the baseline or a rule file, builds a third time in
+  `_judge_tree`: a temporary git worktree of the commit checked in which each such file is written as the
+  base has it (removed when the base has none); for a working directory the changed files are copied in from
+  disk first. A path that a symbolic link of the head leads out of that worktree is not written; the run
+  records a tool error. `policy_base`: the merge base, or for a merge checkout the other parent of the merge.
+  `tree_state` names a policy file of `.wingbox/` that is not as in the commit (`_policy_on_disk`).
+  `policy_mode`, `policy_failed`; both entry scripts add the policy status to the exit status.
+- `wingbox_report`: the section of the comment, the plan lines, the reason `accepted-only-by-this-change`,
+  `deleted_tests` (asked of the graph of the base, at most 40 changed source files, only when a test file
+  is deleted), the output `policy-changed`; `needs_comment` is true for a change of policy files alone.
+- `schema/wingbox-evidence-2.schema.json`: the object `policy`, added to version 2.
+- Tests REQ-ACTION-140..151 (`tests/test_policy.py`, `tests/test_policy_run.py`, the project of
+  `tests/layers_fixture.py` built from text).
+
+Why
+
+- Issue #18: a break of a rule together with a baseline entry for it, or with an edit of the rules, was
+  PASS, also with `fail-on: strict`. Reproduced on a four-layer TypeScript project before the change.
+- The choice for "the policy of the base": a rebuild of the head with the base's policy files. Reading the
+  head's `violation-known` lines against the base's baseline would cover the baseline only; an edit of
+  `config.yaml`, of `learned.sexp` or of a declared rule file changes what Wingbox reports in ways only
+  Wingbox can compute. The build runs only when such a file changed: on the fixture 4.2 s became 5.4 s.
+
+Expectations of existing tests that changed with the behaviour
+
+- REQ-ACTION-102: no expectation changed; the validator of that test now reads the JSON Schema type
+  `boolean` (the record has `complete` and `accepts`).
+
+Not done
+
+- No approval is checked: who reviewed the change is the platform's (code owners, branch rules), as the
+  README says.
+- An edit of the layers in `.wingbox/decisions.sexp` that is on disk and in no commit is not named by
+  `tree_state` (the file changes at every build); a committed one is a policy change.
+- For a merge checkout the findings of the base still come from the merge base, as before.
+
 ## 2026-11-19: a record also when the tests fail or the check does not run (issue #20)
 
 What changed

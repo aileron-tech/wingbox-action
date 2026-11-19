@@ -105,10 +105,50 @@ class ChangedFile:
 
 
 @dataclass(frozen=True)
+class Acceptance:
+    """What in the policy files of a change accepts a finding: the baseline that lists it, with the terms its
+    entry states. An empty file: no entry lists it, the rules as the change edits them do not report it."""
+    file: str = ""
+    owner: str = ""
+    reason: str = ""
+    expires: str = ""      # the last day the entry holds, YYYY-MM-DD
+
+    def missing(self) -> tuple[str, ...]:
+        """The terms the entry does not state."""
+        return tuple(name for name in ("owner", "reason", "expires") if not getattr(self, name))
+
+    def complete(self) -> bool:
+        """Whether this accepts anything: an entry with an owner, a reason and an end date."""
+        return bool(self.file) and not self.missing()
+
+
+@dataclass(frozen=True)
 class Finding:
     head: str
     key: tuple[str, ...]   # what makes the finding the same on base and head
     text: str              # one line for people
+    # None: the head reports it under its own policy. Else the finding is what the policy of the base reports
+    # on the files of the change, and this is what in the change's own policy files keeps the head from reporting it.
+    accepted: Optional[Acceptance] = None
+
+
+@dataclass(frozen=True)
+class PolicyChange:
+    """A file the check is judged by that the change edits."""
+    path: str
+    kind: str     # baseline, rules, declared-rules, workflow or required-tests
+    how: str      # added, changed or removed
+
+
+@dataclass(frozen=True)
+class BaselineEntry:
+    """One accepted break as a line of `.wingbox/baseline.sexp` states it."""
+    head: str     # baseline (an import between two modules) or baseline-capability (what a module does)
+    part: str
+    source: str   # the module
+    target: str   # the module it imports, or the capability
+    rule: str     # the rule the import breaks; "" for a capability
+    terms: Acceptance
 
 
 @dataclass(frozen=True)
@@ -160,6 +200,12 @@ class Report:
     did_not_run: bool = False                                        # the check did not run (its install failed): nothing was looked at
     checked_modules: Optional[int] = None                            # modules the boundary rules were checked on, when known
     skipped_languages: tuple[tuple[str, int], ...] = field(default=())   # (language, files) left out: its parser is not installed
+    policy: tuple[PolicyChange, ...] = field(default=())             # the files the check is judged by that the change edits
+    policy_mode: str = "report"                                      # fail: such a change fails the job; report: it is only reported
+    policy_base: str = ""                                            # the commit whose policy files judged the findings; "" when none was edited
+    self_accepted: tuple[Finding, ...] = field(default=())           # findings under the policy of the base that a complete new entry accepts
+    baseline_entries: tuple[BaselineEntry, ...] = field(default=())  # the baseline entries the change adds or changes
+    tests_deleted: tuple[tuple[str, str], ...] = field(default=())   # (deleted test file, changed source file it used on the base)
 
 
 # ---------------------------------------------------------------------------
@@ -370,6 +416,23 @@ def findings(lines: list[str]) -> tuple[list[Finding], list[NotChecked]]:
     return found, not_checked
 
 
+def known(lines: list[str]) -> dict[tuple[str, ...], Acceptance]:
+    """The breaks a baseline accepts in the output of `wingbox boundaries`, by the key of the finding each
+    hides, with the terms its entry states (Wingbox 0.13 prints them; before that an entry has none)."""
+    found: dict[tuple[str, ...], Acceptance] = {}
+    for line in lines:
+        parsed = parse_line(line)
+        if parsed is None:
+            continue
+        head, args, keys = parsed
+        terms = Acceptance(keys.get("known", ""), keys.get("owner", ""), keys.get("reason", ""), keys.get("expires", ""))
+        if head == "violation-known" and len(args) >= 2:
+            found[("violation", args[0], args[1], keys.get("rule", ""))] = terms
+        elif head == "capability-violation-known" and args:
+            found[("capability-violation", args[0], keys.get("capability", ""), keys.get("pattern", ""))] = terms
+    return found
+
+
 # ---------------------------------------------------------------------------
 # What a pull request changes
 # ---------------------------------------------------------------------------
@@ -379,6 +442,25 @@ def introduced(base: list[Finding], head: list[Finding]) -> tuple[list[Finding],
     base_keys = {finding.key for finding in base}
     head_keys = {finding.key for finding in head}
     return [finding for finding in head if finding.key not in base_keys], len(base_keys - head_keys)
+
+
+def judged(base: list[Finding], head: list[Finding], with_base_policy: Optional[list[Finding]],
+           accepted: dict[tuple[str, ...], Acceptance]) -> tuple[list[Finding], list[Finding], int]:
+    """(the findings the change introduces, those it introduces and accepts itself, how many findings of the
+    base are gone), when the change edits the files it is judged by.
+
+    head: the findings of the head under its own policy files. with_base_policy: the findings of the same
+    files under the policy files of the base (None when the change edits none: both are then the same).
+    accepted: what the head's baseline accepts (`known`). A finding only the policy of the base reports is
+    introduced, and carries what in the change keeps the head from reporting it; when that is a baseline entry
+    with an owner, a reason and an end date, the change accepts its own break openly and the finding goes to
+    the second list. A finding of the base is gone only when neither policy reports it any more."""
+    head_keys = {finding.key for finding in head}
+    only_base = [Finding(finding.head, finding.key, finding.text, accepted.get(finding.key, Acceptance()))
+                 for finding in with_base_policy or [] if finding.key not in head_keys]
+    new, resolved = introduced(base, [*head, *only_base])
+    own = [finding for finding in new if finding.accepted is not None and finding.accepted.complete()]
+    return [finding for finding in new if finding not in own], own, resolved
 
 
 def module_of(path: str) -> str:
