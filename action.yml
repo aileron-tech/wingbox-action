@@ -8,7 +8,7 @@ branding:
 inputs:
   version:
     description: The wingbox release installed from PyPI, with the parser of every language.
-    default: "0.11.0"
+    default: "0.12.2"
   hops:
     description: How far dependents are followed from each changed file.
     default: "2"
