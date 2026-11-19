@@ -18,7 +18,8 @@ from typing import Optional
 import wingbox_changes as changes
 import wingbox_diagram as diagram
 import wingbox_tests
-from wingbox_facts import BLOCKING_HEADS, MARKER, WORKING_TREE, ChangedFile, ChangedItem, Dependent, Report, Tree, User, folder_of
+from wingbox_facts import (BLOCKING_HEADS, MARKER, WORKING_TREE, Acceptance, ChangedFile, ChangedItem, Dependent, Finding, Report, Tree, User,
+                           folder_of, module_of)
 
 FAIL_ON = ("none", "violations", "not-checked", "strict")
 LIST_LIMIT = 10    # direct dependents and findings named in the comment; the job summary names them all
@@ -123,9 +124,10 @@ def untouched_count(report: Report) -> int:
 
 def needs_comment(report: Report) -> bool:
     """A pull request that changes no source module of the graph other than tests gets no comment, unless a
-    wingbox command failed or a language was left out: then the comment says what could not be checked."""
+    wingbox command failed or a language was left out (then the comment says what could not be checked), or
+    it edits a file the check is judged by."""
     return (any(c.module is not None and not is_test(c.path) for c in report.changed) or bool(report.introduced)
-            or bool(report.tool_errors) or bool(report.skipped_languages) or bool(_tree_reasons(report)))
+            or bool(report.tool_errors) or bool(report.skipped_languages) or bool(_tree_reasons(report)) or bool(report.policy))
 
 
 def _tree_reasons(report: Report) -> tuple[str, ...]:
@@ -146,7 +148,8 @@ def result(report: Report) -> tuple[str, str, tuple[str, ...]]:
     """(result, execution status, reasons) of the boundary check of a pull request.
 
     The result never reads what was not checked as a pass. FAIL: the pull request introduces a blocking
-    finding. UNKNOWN: a wingbox command ended abnormally (execution "error"), files of a language were left out of
+    finding, under its own policy files or under those of the base (a finding only its own edit of a policy
+    file accepts is introduced). UNKNOWN: a wingbox command ended abnormally (execution "error"), files of a language were left out of
     the graph (its parser is not installed), or a part of the repository was not checked. NOT_APPLICABLE: no source module outside the tests changed. PASS: none of these."""
     if report.did_not_run:      # nothing was looked at: the record of such a run says only that
         return "UNKNOWN", "error", ("check-did-not-run",)
@@ -157,7 +160,9 @@ def result(report: Report) -> tuple[str, str, tuple[str, ...]]:
     blocking = sum(1 for finding in report.introduced if finding.head in BLOCKING_HEADS)
     tree = _tree_reasons(report)
     if blocking:
-        return "FAIL", execution, (f"introduced-violations: {blocking}", *errors, *left_out, *tree)
+        own = sum(1 for finding in report.introduced if finding.head in BLOCKING_HEADS and finding.accepted is not None)
+        only_own = (f"accepted-only-by-this-change: {own}",) if own else ()
+        return "FAIL", execution, (f"introduced-violations: {blocking}", *only_own, *errors, *left_out, *tree)
     if errors or left_out or tree:
         # Before "no source module changed": the changed files may be of the language that was left out, and a
         # report about another tree than the one named says nothing about the one named.
@@ -195,6 +200,15 @@ def changed_tests(raw: dict[str, tuple[Optional[str], tuple[Dependent, ...]]],
             if source_module is not None and not is_test(source_path) and any(d.module == test_module and d.depth == 1 for d in dependents):
                 found.append((test_path, source_path))
     return tuple(sorted(found))
+
+
+def deleted_tests(deleted: list[str], users: dict[str, list[Dependent]]) -> tuple[tuple[str, str], ...]:
+    """(deleted test file, changed source file) for every test file the pull request deletes that used a
+    changed source file directly on the base. deleted: the files the pull request deletes; users: per changed
+    source file its dependents in the graph of the base."""
+    modules = {module_of(path): path for path in deleted if is_test(path)}
+    return tuple(sorted({(modules[dependent.module], source) for source, found in users.items() if not is_test(source)
+                         for dependent in found if dependent.depth == 1 and dependent.module in modules}))
 
 
 # ---------------------------------------------------------------------------
@@ -422,7 +436,8 @@ def outputs(report: Report) -> dict[str, str]:
     needed = required_evidence(report)
     return {"result": outcome, "execution": execution, "reasons": "; ".join(reasons),
             "untouched-dependents": str(untouched_count(report)), "introduced-findings": str(len(report.introduced)),
-            "not-checked-parts": str(len(report.not_checked)), "tests-to-run": str(len(tests_to_run(report))),
+            "not-checked-parts": str(len(report.not_checked)), "policy-changed": str(len(report.policy)),
+            "tests-to-run": str(len(tests_to_run(report))),
             "tests-passed": passed, "tests-failed": failed, "tests-without-record": without,
             "tests-evidence": tests_summary(report), "tests-required": str(len(report.required_tests)),
             "tests-required-passed": "" if needed is None else str(sum(1 for item in needed if item.status == wingbox_tests.PASSED)),
@@ -531,7 +546,14 @@ def build_plan(report: Report) -> str:
     lines = [f"(review-plan :schema {PLAN_SCHEMA} :result {outcome} :execution {execution} :base {report.base} :head {report.head} "
              f":wingbox {_q(report.version)} :hops {report.hops}{_tree_keys(report.tree)})"]
     lines += [f"(reason {_q(reason)})" for reason in reasons]
-    lines += [f"(finding {finding.head} {_q(finding.text)})" for finding in report.introduced]
+    lines += [f"(finding {finding.head} {_q(finding.text)}{_only_accepted_by(finding.accepted)})" for finding in report.introduced]
+    lines += [f"(policy-changed {_q(change.path)} :kind {change.kind} :how {change.how})" for change in report.policy]
+    if report.policy_base:
+        lines.append(f"(policy-of-base {report.policy_base})")
+    lines += [f"(baseline-entry {_q(entry.part)} {_atom(entry.source)} {_atom(entry.target)}"
+              f"{' :rule ' + _q(entry.rule) if entry.rule else ''}{_terms_keys(entry.terms)})" for entry in report.baseline_entries]
+    lines += [f"(accepted-by-change {finding.head} {_q(finding.text)} :known {_q(finding.accepted.file)}{_terms_keys(finding.accepted)})"
+              for finding in report.self_accepted if finding.accepted is not None]
     named = changed_items(report)
     for changed, item in named:
         how = f"calls :via ({' '.join(_atom(name) for name in item.via)})" if item.via else "changed"
@@ -584,6 +606,7 @@ def build_plan(report: Report) -> str:
                          + (f" :commits ({' '.join(_atom(commit) for commit in read.commits)})" if read.commits else "") + ")")
     lines += [f"(test-report-error {_q(path)} :reason {_q(reason)})" for path, reason in report.test_report_errors]
     lines += [f"(test-changed {_q(test)} :tests {_q(source)})" for test, source in report.tests_changed]
+    lines += [f"(test-deleted {_q(test)} :tested {_q(source)})" for test, source in report.tests_deleted]
     lines += [f"(not-checked {_q(part.part)} :reason {_atom(part.reason)})" for part in report.not_checked]
     lines += [f"(skipped-language {_atom(name)} :files {files})" for name, files in report.skipped_languages]
     if report.checked_modules is not None:
@@ -613,7 +636,83 @@ def _tree_keys(tree: Optional[Tree]) -> str:
     return f" :tree {tree.relation}" if not tree.commit else f" :checked {tree.commit} :tree {tree.relation}"
 
 
-_PLAN_WORK = ("(finding ", "(look ", "(look-module ", "(run-test ", "(required-test ", "(test-changed ")
+_PLAN_WORK = ("(finding ", "(look ", "(look-module ", "(run-test ", "(required-test ", "(test-changed ", "(test-deleted ", "(policy-changed ")
+
+
+def _terms_keys(terms: Acceptance) -> str:
+    """The terms of a baseline entry as keys of a plan line: the ones it states, or the ones it lacks."""
+    if terms.missing():
+        return f" :missing ({' '.join(terms.missing())})"
+    return f" :owner {_q(terms.owner)} :reason {_q(terms.reason)} :expires {_atom(terms.expires)}"
+
+
+def _only_accepted_by(accepted: Optional[Acceptance]) -> str:
+    """The keys of a finding line for a finding that only the policy of the base reports."""
+    if accepted is None:
+        return ""
+    return f" :accepted-only-by {_q(accepted.file)}{_terms_keys(accepted)}" if accepted.file else " :accepted-only-by rules"
+
+
+_POLICY_KINDS = {
+    "baseline": "the breaks of the rules that are accepted",
+    "rules": "the boundary rules",
+    "declared-rules": "rules the project declares",
+    "workflow": "the workflow that runs this check",
+    "required-tests": "the tests a change must pass",
+}
+_TERM_WORDS = {"owner": "owner", "reason": "reason", "expires": "end date"}
+
+
+def _lacks(terms: Acceptance, joined: str) -> str:
+    """`no owner, no reason, no end date`, or with joined "an" `an owner, a reason and an end date`."""
+    words = [_TERM_WORDS[name] for name in terms.missing()]
+    if joined == "no":
+        return ", ".join(f"no {word}" for word in words)
+    named = [f"{'an' if word[0] in 'aeo' else 'a'} {word}" for word in words]
+    return named[0] if len(named) == 1 else f"{', '.join(named[:-1])} and {named[-1]}"
+
+
+def _finding_row(finding: Finding) -> str:
+    """The row of a new finding; one that only the policy of the base reports says what in the change accepts it."""
+    row = f"- {finding.head}: {finding.text}"
+    if finding.accepted is None:
+        return row
+    if not finding.accepted.file:
+        return f"{row}. Only the rules as this change edits them do not report it."
+    return f"{row}. Only this change accepts it: {_code(finding.accepted.file)}, an entry without {_lacks(finding.accepted, 'an')}."
+
+
+def _policy_section(report: Report, full: bool) -> list[str]:
+    """The section of a change that edits a file the check is judged by: the files, how the findings were
+    judged, the baseline entries it adds or changes, the findings it accepts itself. Empty without such a file."""
+    if not report.policy:
+        return []
+    lines = ["### This change edits what it is checked by", ""]
+    lines += [f"- {_code(change.path)} ({change.how}): {_POLICY_KINDS.get(change.kind, change.kind)}" for change in report.policy]
+    base = f" (commit {_code(report.policy_base[:7])})" if report.policy_base else ""
+    lines += ["", f"The findings are judged with these files as the base has them{base}: what only this change's own edit accepts is "
+                  "reported as new. A change of these files needs the review of someone other than its author.", ""]
+    if report.baseline_entries:
+        shown = report.baseline_entries if full else report.baseline_entries[:LIST_LIMIT]
+        lines += ["New or changed baseline entries:", ""]
+        for entry in shown:
+            what = f"{_code(entry.source)} -> {_code(entry.target)} ({entry.rule})" if entry.rule else f"{_code(entry.source)} uses {entry.target}"
+            terms = entry.terms
+            said = (f"owner {terms.owner}, reason {_q(terms.reason)}, until {terms.expires}" if terms.complete()
+                    else f"{_lacks(terms, 'no')}; it accepts nothing in this check")
+            lines.append(f"- {what}: {said}")
+        if len(report.baseline_entries) > len(shown):
+            lines.append(f"- ... and {len(report.baseline_entries) - len(shown)} more (the job summary lists them all)")
+        lines.append("")
+    if report.self_accepted:
+        shown_own = report.self_accepted if full else report.self_accepted[:LIST_LIMIT]
+        lines += [f"Accepted by this change itself ({len(report.self_accepted)}):", ""]
+        lines += [f"- {finding.head}: {finding.text}, accepted in {_code(finding.accepted.file)} by {finding.accepted.owner} until "
+                  f"{finding.accepted.expires} ({_q(finding.accepted.reason)})" for finding in shown_own if finding.accepted is not None]
+        if len(report.self_accepted) > len(shown_own):
+            lines.append(f"- ... and {len(report.self_accepted) - len(shown_own)} more (the job summary lists them all)")
+        lines.append("")
+    return lines
 
 
 def _build_failed(report: Report) -> bool:
@@ -646,7 +745,8 @@ def build_comment(report: Report, full: bool = False) -> str:
         problem = (f"**Wingbox** could not check this change{'' if _build_failed(report) else ' completely'}: "
                    f"{', '.join(_code(error) for error in report.tool_errors)}. "
                    "The result is UNKNOWN, not a pass; the job log has the tool's message.")
-    nothing_else = not any(c.module is not None and not is_test(c.path) for c in report.changed) and not report.introduced
+    nothing_else = (not any(c.module is not None and not is_test(c.path) for c in report.changed) and not report.introduced
+                    and not report.policy)
     if report.skipped_languages:
         # Files left out of the graph have no users and no findings in it: that must not read as "nothing uses this".
         counts = [f"{files:,} {_LANGUAGES.get(name, name)} file{'' if files == 1 else 's'}" for name, files in report.skipped_languages]
@@ -711,10 +811,11 @@ def build_comment(report: Report, full: bool = False) -> str:
     if report.introduced:
         shown_findings = report.introduced if full else report.introduced[:LIST_LIMIT]
         lines += ["### New boundary findings", ""]
-        lines += [f"- {finding.head}: {finding.text}" for finding in shown_findings]
+        lines += [_finding_row(finding) for finding in shown_findings]
         if len(report.introduced) > len(shown_findings):
             lines.append(f"- ... and {len(report.introduced) - len(shown_findings)} more (the job summary lists them all)")
         lines.append("")
+    lines += _policy_section(report, full)
     for changed, item in named if full else named[:ITEM_LIMIT]:
         real = _real_users(item)
         several = len(real) > 1
@@ -774,6 +875,11 @@ def build_comment(report: Report, full: bool = False) -> str:
         rest = f"; {len(report.tests_changed) - len(pairs)} more" if len(report.tests_changed) > len(pairs) else ""
         lines += ["Tests changed together with the code they test: " + "; ".join(f"{_code(test)} (tests {_code(source)})" for test, source in pairs)
                   + rest + ". Look at what they no longer check.", ""]
+    if report.tests_deleted:
+        gone = sorted(report.tests_deleted) if full else sorted(report.tests_deleted)[:LIST_LIMIT]
+        rest = f"; {len(report.tests_deleted) - len(gone)} more" if len(report.tests_deleted) > len(gone) else ""
+        lines += ["Tests deleted together with the code they tested: " + "; ".join(f"{_code(test)} (tested {_code(source)})" for test, source in gone)
+                  + rest + ". What they checked is no longer checked.", ""]
 
     # The rest: folded in the comment, open in the job summary.
     drawn = diagram_block(report, found)

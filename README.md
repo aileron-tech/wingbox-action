@@ -174,7 +174,10 @@ the script. `--head REF` checks a commit instead.
   comment is one sentence.
 - **New boundary findings**: findings of `wingbox boundaries` on the head that
   the base does not have. Known findings (in a baseline) and type-only imports
-  are not counted. Without any, the comment says "No new boundary finding."
+  are not counted, unless the pull request itself adds the baseline entry or
+  edits the rules: see
+  [A change that edits what it is checked by](#a-change-that-edits-what-it-is-checked-by).
+  Without any, the comment says "No new boundary finding."
 - **A changed item and its users**: the changed lines of the diff are sorted
   into the items Wingbox lists for the file (functions, types, constants).
   For each item that holds a changed line of code the comment names the
@@ -189,6 +192,9 @@ the script. `--head REF` checks a commit instead.
   that uses a changed source file directly and loses or replaces a line of
   code in the same pull request. New tests (lines only added) are not
   flagged.
+- **Tests deleted together with the code they tested**: a test file the pull
+  request deletes that used a changed source file directly on the base
+  (`test-deleted` in the plan). What it checked is no longer checked.
 - **A changed method**: inside a class, the changed line belongs to the method
   that holds it, named `Class.method`. Its users are the modules that use the
   class and call a method of that name; a module that uses the class but not
@@ -261,7 +267,7 @@ The action sets the outputs `result`, `execution` and `reasons`:
 
 | result | when |
 |---|---|
-| `FAIL` | the pull request introduces a layer, capability or pattern violation |
+| `FAIL` | the pull request introduces a layer, capability or pattern violation, also one that only its own edit of a baseline or of the rules accepts |
 | `UNKNOWN` | a part of the repository was not checked; a wingbox command ended abnormally (`execution` is then `error`); files of a language were left out because its parser is not installed; or the files checked are not the commit the report names |
 | `NOT_APPLICABLE` | no source file outside the tests changed |
 | `PASS` | none of the above |
@@ -269,6 +275,70 @@ The action sets the outputs `result`, `execution` and `reasons`:
 `fail-on: strict` fails the job on `FAIL` and on `UNKNOWN`. The result is
 about the boundary rules; the list of who uses what changed is information for
 the reviewer and never fails a job.
+
+### A change that edits what it is checked by
+
+The result rests on files of the repository itself. The check knows them as
+policy files:
+
+| File | What it is |
+|---|---|
+| `.wingbox/baseline.sexp` | the breaks of the rules that are accepted |
+| `.wingbox/config.yaml`, `.wingbox/learned.sexp`, the layers `.wingbox/decisions.sexp` sets | the boundary rules |
+| a rule file the project declares (a dependency-cruiser layer list and the like), as the graph of the base or of the head names it | rules the project declares |
+| the workflow that runs the check (the file GitHub or GitLab names for the run, and any changed workflow file that names wingbox) | the workflow |
+| `.wingbox/required-tests.yaml`, or the manifest whose path the job gives | the tests a change must pass |
+
+A pull request that edits one of them would be judged by its own edit: a
+break of a rule together with a new baseline entry for it used to pass. So:
+
+- The report has the section **This change edits what it is checked by**
+  with each such file, the plan a `(policy-changed "<path>" :kind <kind> :how
+  added|changed|removed)` line, the evidence record the object `policy`, and
+  the output `policy-changed` their number. The `paths` input does not hide
+  them.
+- **The findings are judged with these files as the base has them.** When
+  the pull request edits the baseline or a rule file, the action builds the
+  head once more in a temporary git worktree in which these files are the
+  base's (absent when the base has none), and never touches the checkout. A
+  finding that build gives and the base does not have is introduced, like one
+  the head gives under its own files. The row of such a finding says what
+  alone accepts it: the pull request's own baseline entry, or its edit of the
+  rules. The base is the merge base; for a checkout of the merge of the head
+  into the base it is the base as merged (`policy-of-base` in the plan).
+- **A new or changed baseline entry needs an owner, a reason and an end
+  date** (`:owner "<who>" :reason "<why>" :expires YYYY-MM-DD`, read by
+  Wingbox 0.13 and newer). With all three, the break it lists is accepted:
+  the report lists it under "Accepted by this change itself" and it is no
+  violation. An entry without them accepts nothing in the check, and after
+  the end date Wingbox reports the break as a violation again. An edit of the
+  rules accepts nothing in the pull request that makes it: change the rules
+  in a pull request of their own, then the code.
+- **`policy-change`** says what the change of a policy file itself does:
+  `fail` fails the job, `report` only reports. Without a value it is `fail`
+  with `fail-on: strict` and `report` otherwise. It does not change the
+  result of the boundary check.
+- A policy file of `.wingbox/` that is on disk but not as in the commit
+  checked (written by an earlier step of the job) makes the result `UNKNOWN`,
+  like any other file that differs from the commit.
+
+Who may approve such a change is not something a check can decide: that is
+the platform's. A setup that separates the duties:
+
+```
+# .github/CODEOWNERS (GitLab: CODEOWNERS)
+/.wingbox/            @your-org/architecture-owners
+/.github/workflows/   @your-org/architecture-owners
+```
+
+with a branch rule that requires the review of a code owner, who is
+someone other than the author (GitHub: "Require review from Code Owners" and
+at least one approval; GitLab: code owner approval, "Prevent approval by
+author" and "Prevent approvals by users who add commits"), and no approval
+right for the account of a coding agent that writes changes. With that in
+place `policy-change: report` leaves the decision to those reviewers; without
+it keep `fail`, and merge a change of the policy files by someone who may
+override the check.
 
 ### Which commit was checked
 
@@ -481,7 +551,8 @@ holds source code outside the tests; a change of documents only passes.
 Each run also writes `wingbox-evidence.json` (output `evidence`; in GitLab in
 `wingbox-out/`): one JSON document for a system that keeps evidence of change
 control. It holds the repository and the run, the base, the head, the commit
-that was checked, the result with its reasons, the counts, the changed files
+that was checked, the result with its reasons, the policy files the change
+edits (`policy`), the counts, the changed files
 with their SHA-256, the tests to run and the required tests with their
 evidence and every recorded case, the manifest of required tests as it was
 read, the test reports with where each comes from, and the SHA-256 of the
@@ -526,6 +597,7 @@ same pull request always gives the same diagram.
 | `version` | the current wingbox release | The wingbox release installed from PyPI, with the parser of every language. The names of what a dependent uses and the paths of the farther dependents need 0.10.0 or newer. |
 | `hops` | `2` | How far dependents are followed from each changed file. |
 | `fail-on` | `none` | `none`; `violations`: fail when the pull request introduces a layer, capability or pattern violation; `not-checked`: fail when a part of the repository could not be checked. |
+| `policy-change` | `fail` with `fail-on: strict`, else `report` | What a change of a file the check is judged by does: `fail` fails the job, `report` names it in the report. See [A change that edits what it is checked by](#a-change-that-edits-what-it-is-checked-by). |
 | `comment` | `true` | Write the report as a comment on the pull request. With `false` the report is only in the job summary. |
 | `upload-map` | `false` | Upload the interactive 3D map Wingbox builds (`.wingbox/map.html`) as the workflow artifact `wingbox-map`. |
 | `paths` | all | Glob patterns of the changed files to report on, one per line; `!pattern` leaves files out. |
@@ -550,6 +622,7 @@ same pull request always gives the same diagram.
 | `untouched-dependents` | Number of different modules that depend on a changed file and are not changed. |
 | `introduced-findings` | Number of boundary findings the pull request introduces. |
 | `not-checked-parts` | Number of parts `wingbox boundaries` could not check. |
+| `policy-changed` | Number of files the check is judged by that the pull request edits. |
 | `plan` | Path of the review plan (S-expression lines) on the runner. |
 | `evidence` | Path of the evidence record of the run (`wingbox-evidence.json`). Written also when the check did not run. |
 | `result` | `PASS`, `FAIL`, `UNKNOWN` or `NOT_APPLICABLE`: the result of the boundary check. |
@@ -597,7 +670,7 @@ What it leaves:
   `WINGBOX_TESTS_TO_RUN`, `WINGBOX_TESTS_PASSED`, `WINGBOX_TESTS_FAILED`,
   `WINGBOX_TESTS_WITHOUT_RECORD`, `WINGBOX_TESTS_EVIDENCE`, `WINGBOX_TESTS_REQUIRED`,
   `WINGBOX_TESTS_REQUIRED_PASSED`, `WINGBOX_TEST_REPORTS_REFUSED`, `WINGBOX_INTRODUCED_FINDINGS`,
-  `WINGBOX_UNTOUCHED_DEPENDENTS` and `WINGBOX_NOT_CHECKED_PARTS`;
+  `WINGBOX_UNTOUCHED_DEPENDENTS`, `WINGBOX_POLICY_CHANGED` and `WINGBOX_NOT_CHECKED_PARTS`;
 - one note on the merge request, updated on each push, when the CI/CD variable
   `WINGBOX_GITLAB_TOKEN` holds a project access token with the `api` scope (mask the variable).
   The job token cannot write notes; without the variable the report stays in the log and the
@@ -609,6 +682,7 @@ Settings are variables of the job; override them after the include:
 wingbox:
   variables:
     WINGBOX_FAIL_ON: "strict"     # none (default), violations, not-checked or strict
+    WINGBOX_POLICY_CHANGE: "report"   # fail (default with strict) or report: a change of the baseline, the rules or the pipeline file
     WINGBOX_HOPS: "2"
     WINGBOX_VERSION: "0.14.0"     # the wingbox release from PyPI
     WINGBOX_ACTION_REF: "v1"      # the tag, branch or commit of this repository the scripts come from
@@ -667,7 +741,8 @@ then writes no comment, warns, and keeps the report in the job summary.
   your branch. On the runner, Wingbox writes only into `.wingbox/` of the
   checkout (it ignores itself for git), and the action writes its report and
   the copy of the map into the runner's temporary folder. The base commit is
-  checked out in a temporary git worktree that is removed.
+  checked out in a temporary git worktree that is removed; so is the head with
+  the policy files of the base, when the pull request edits one.
 - **No image is uploaded** for the diagram: it is text in the comment.
 - **No artifact unless you ask.** With `upload-map: true` the map is stored as
   a workflow artifact of your own repository. How long it is kept is your
@@ -709,7 +784,8 @@ then writes no comment, warns, and keeps the report in the job summary.
 - Two pushes in quick succession start two runs; add a `concurrency` group to
   the workflow if you want the older run cancelled.
 - The code graph is built twice in each run, once for the head and once for
-  the base.
+  the base, and a third time when the pull request edits the baseline or a
+  rule file.
 
 ## Development
 
@@ -726,8 +802,9 @@ whole script on the fixture repository. The workflow in
 fixture repository on Linux, macOS and Windows.
 
 `wingbox_pr.py` is the I/O (git, the wingbox commands, the GitHub API);
-`wingbox_facts.py` reads the facts Wingbox prints, `wingbox_report.py` builds
-the report and `wingbox_diagram.py` the diagram, all three pure functions.
+`wingbox_facts.py` reads the facts Wingbox prints, `wingbox_policy.py` knows
+the files the check is judged by, `wingbox_report.py` builds the report and
+`wingbox_diagram.py` the diagram, all pure functions.
 
 ## License
 

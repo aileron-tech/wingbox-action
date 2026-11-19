@@ -13,6 +13,7 @@ import hashlib
 from dataclasses import dataclass
 from typing import Optional
 
+import wingbox_policy
 import wingbox_tests
 from wingbox_facts import Report
 from wingbox_report import required_evidence, result, test_evidence, tests_summary, tests_to_run, untouched_count  # noqa: F401
@@ -63,6 +64,7 @@ def build_evidence(report: Report, run: Run, documents: dict[str, str]) -> dict[
                     "tree": tree.relation if tree is not None else "unknown",
                     "differs": list(tree.differs) if tree is not None else []},
         "result": {"boundaries": outcome, "execution": execution, "reasons": list(reasons)},
+        "policy": wingbox_policy.record(report),
         "counts": {"changed-files": len(report.changed), "untouched-dependents": untouched_count(report),
                    "introduced-findings": len(report.introduced), "not-checked-parts": len(report.not_checked),
                    "tests-to-run": len(tests_to_run(report))},
