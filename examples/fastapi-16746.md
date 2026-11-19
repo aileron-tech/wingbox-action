@@ -132,7 +132,7 @@ Not in the code graph (3: documents, configuration or deleted files): `docs/en/d
 
 No new boundary finding.
 
-**Not checked**: part `.` (its style has no layers). No finding is reported there, and that is not a pass.
+**Not checked**: part `.` (its style has no layers). No finding is reported there, and that is not a pass. No part of this repository could be checked against boundary rules.
 
 <details>
 <summary>Review plan for an agent</summary>
@@ -198,7 +198,7 @@ No new boundary finding.
 (look "docs_src/sql_databases/tutorial001.py" 30 :module docs_src/sql_databases/tutorial001 :why call :item Depends :places 2)
 (look "docs_src/sql_databases/tutorial001_non_an.py" 37 :module docs_src/sql_databases/tutorial001_non_an :why call :item Depends :places 5)
 (look "docs_src/sql_databases/tutorial002.py" 47 :module docs_src/sql_databases/tutorial002 :why call :item Depends :places 2)
-(plan-more :hidden 130)
+(plan-more :hidden 131)
 ```
 
 </details>

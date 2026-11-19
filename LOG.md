@@ -1,5 +1,54 @@
 # Log
 
+## 2026-11-18: the check of a working directory
+
+What changed
+
+- `wingbox_pr.settings`: keys `--root`, `--base`, `--head`, `--out` before the
+  environment variables, the pull request event and the defaults; with `--base`
+  as a key and no head anywhere the head is `WORKING_TREE`.
+- `wingbox_pr.collect` with `WORKING_TREE`: the names and hunks come from
+  `git diff <merge base>` (index and working files) plus the untracked files
+  (`git ls-files --others --exclude-standard`, each one hunk of added lines by
+  `wingbox_changes.added_file`); the graph of the head is the folder on disk,
+  the graph of the base a worktree at the merge base, as before; hashes from
+  the files on disk. No commit, the index untouched.
+- Tests REQ-ACTION-080..082 (`tests/test_working_tree.py`), the last one end to
+  end with wingbox on a repository with an uncommitted edit and an untracked
+  file, run from another directory.
+
+Why
+
+- The maintainer: the check must take the working directory by a key. His
+  agents review a change before the commit; to check it they had to clone the
+  repository and make a snapshot commit.
+
+## 2026-11-18: a changed method, not the whole class
+
+What changed
+
+- `wingbox_facts.Item.methods`: the method names of a class, from the
+  `(:methods ...)` list of its fact.
+- `wingbox_changes.methods_of`: the methods of a class as items of their own,
+  found in the layout: a line at the level of the class's members that
+  defines one of those names (`def name`, `async name(`, `name = (`,
+  `name<T>(`, `Type name(`); `spans` adds them, so the innermost holder of a
+  changed line is the method. A field or the constructor stays the class.
+- `wingbox_pr.changed_items`: the users of a method are those of
+  `wingbox usages Class.method` that also use the class (one more query per
+  class); without an answer for the method the class is reported as before.
+  Overloads are one item.
+- Tests REQ-ACTION-073..078 (`tests/test_methods.py`).
+- Checked on a public NestJS-style server (707 files): a change inside one
+  method of a service class named 1 module outside the tests with the exact
+  call line, where the class as a whole has 6 users.
+
+Why
+
+- A run of the check on real service-class code (NestJS, Python services):
+  a change inside one method was reported as the class with every user of the
+  class, so the lists were long and mostly not affected by the change.
+
 ## 2026-11-18: the review plan, the tests to run, the strict result
 
 What changed

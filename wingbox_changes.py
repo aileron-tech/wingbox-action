@@ -83,6 +83,14 @@ def is_code(line: str, path: str) -> bool:
     return not (path.endswith(".php") and text.startswith("#") and not text.startswith("#["))
 
 
+def added_file(text: str) -> tuple[Hunk, ...]:
+    """The hunks of a file that is new as a whole (an untracked file): one hunk that adds every line."""
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return (Hunk(1, tuple(lines), ()),) if lines else ()
+
+
 def removes_code(changed: tuple["Hunk", ...], path: str) -> bool:
     """Whether the hunks of a file remove or replace a line of code (not only add lines, not only comments)."""
     return any(is_code(text, path) for hunk in changed for text in hunk.removed)
@@ -103,11 +111,49 @@ def _leads(text: str) -> bool:
     return text.startswith(("#[", "#![", "@"))
 
 
+def _definition(names: tuple[str, ...]) -> "re.Pattern[str]":
+    """A line that defines one of the methods: `def name`, `async name(`, `name = (`, `name<T>(`, `Type name(`."""
+    alternatives = "|".join(re.escape(name) for name in sorted(names, key=len, reverse=True))
+    return re.compile(rf"(?<![\w.@$])({alternatives})(?:\s*<[^>()]*>)?\s*(?:\(|=(?!=)|:)|^def\s+({alternatives})\b")
+
+
+def methods_of(item: Item, last: int, source: list[str], path: str) -> list[Item]:
+    """The methods of a class as items of their own, found in the layout of the class: a line at the level of
+    the class's members that defines one of the names the graph lists for it. The item is named
+    `Class.method` and starts at the line of the definition. A call of the same name deeper in a body, a
+    decorator or a comment is not a definition."""
+    if not item.methods or not 1 <= item.line <= len(source):
+        return []
+    base = _indent(source[item.line - 1])
+    body = [number for number in range(item.line + 1, min(last, len(source)) + 1)
+            if is_code(source[number - 1], path) and _indent(source[number - 1]) > base]
+    if not body:
+        return []
+    level = min(_indent(source[number - 1]) for number in body)
+    pattern = _definition(item.methods)
+    found: list[Item] = []
+    for number in body:
+        text = source[number - 1]
+        if _indent(text) != level or text.strip().startswith(("@", "#[")):
+            continue
+        match = pattern.search(text.strip())
+        if match:
+            found.append(Item(f"{item.name}.{match.group(1) or match.group(2)}", "method", number))
+    return found
+
+
 def spans(items: list[Item], source: list[str], path: str) -> list[tuple[Item, int, int]]:
-    """(item, first line, last line), lines counted from 1, for every item whose start line is in the file.
+    """(item, first line, last line), lines counted from 1, for every item whose start line is in the file,
+    and for the methods of every class whose fact names them.
 
     An item runs from the attribute and decorator lines directly above its start to the line before the next
     line of code that is not indented deeper than its start and does not continue it."""
+    found = _spans(items, source, path)
+    methods = [method for item, _first, last in found for method in methods_of(item, last, source, path)]
+    return found + _spans(methods, source, path) if methods else found
+
+
+def _spans(items: list[Item], source: list[str], path: str) -> list[tuple[Item, int, int]]:
     found: list[tuple[Item, int, int]] = []
     total = len(source)
     for item in sorted(items, key=lambda item: item.line):

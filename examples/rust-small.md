@@ -74,7 +74,7 @@ Within 2 hops, by folder: `src/infra/` 4, `src/` 1, `src/app/` 1.
 
 No new boundary finding.
 
-**Not checked**: part `.` (its style has no layers). No finding is reported there, and that is not a pass.
+**Not checked**: part `.` (its style has no layers). No finding is reported there, and that is not a pass. No part of this repository could be checked against boundary rules.
 
 <details>
 <summary>Review plan for an agent</summary>
@@ -90,6 +90,7 @@ No new boundary finding.
 (changed-item "src/infra/session_detail.rs" load_last_assistant_output :kind fn :line 30 :how calls :via (detect_log_format looks_like_claude_jsonl))
 (look "src/main.rs" 1093 :module src/main :why call :item load_last_assistant_output :places 2)
 (not-checked "." :reason no-layer-style)
+(checked :modules 0)
 (changed-file "src/infra/session_detail.rs" :sha256 e0ef5272f7b67ca65e372eb6da0b9ad8aa59054f043c9ee0bd40977bb5b60f26)
 ```
 

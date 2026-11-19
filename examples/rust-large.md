@@ -107,7 +107,7 @@ Not in the code graph (2: documents, configuration or deleted files): `CHANGELOG
 
 No new boundary finding.
 
-**Not checked**: part `.` (its style has no layers). No finding is reported there, and that is not a pass.
+**Not checked**: part `.` (its style has no layers). No finding is reported there, and that is not a pass. No part of this repository could be checked against boundary rules.
 
 <details>
 <summary>Review plan for an agent</summary>
@@ -143,6 +143,7 @@ No new boundary finding.
 (look-module src/infra/session_detail :why uses :file "src/infra/gemini.rs")
 (look-module src/infra/session_index :why uses :file "src/infra/processes.rs")
 (not-checked "." :reason no-layer-style)
+(checked :modules 0)
 (changed-file "CHANGELOG.md" :sha256 f55f8754b690f1630b90e9a5b3fe424aaa34c54c1daa8b8a37b2ca91e859ad8b)
 (changed-file "README.md" :sha256 f0103694d6891023343bd326c64a61799ce3b1e0fc2cc266ecf6040455b35e3f)
 (changed-file "src/app/mod.rs" :sha256 d31b517a3ebcc7c0c0f5bdbb4e0bb11d95567477d2d21b5b45a081fc9bc05e8b)

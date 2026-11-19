@@ -14,6 +14,14 @@ with its history. It builds the code graph of the head (and of the base, in a gi
   base has not: the findings the pull request introduces;
 - the parts `wingbox boundaries` could not check, said as such.
 
+Run by hand it checks a working directory before a commit:
+
+    python wingbox_pr.py --root DIR --base REF [--head REF] [--out DIR]
+
+With `--base` and no head the change is the base against the files of DIR as they are on disk,
+uncommitted and untracked ones included (git's ignore rules apply); no commit is made. The report
+and the plan go to `--out`.
+
 It writes the report to the job summary and, when asked, to one comment on the pull request that
 is updated on each push (found by its HTML marker). Standard library only; the only network use
 is the GitHub API for the comment (pip installs wingbox before this script runs). Wingbox writes
@@ -26,6 +34,7 @@ wingbox_diagram, all three pure.
 """
 from __future__ import annotations
 
+import argparse
 import dataclasses
 import hashlib
 import json
@@ -44,8 +53,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))   # the modules next to
 
 import wingbox_changes  # noqa: E402
 from wingbox_facts import (  # noqa: E402,F401
-    BLOCKING_HEADS, FINDING_HEADS, MARKER, ChangedFile, ChangedItem, Dependent, Finding, Item, NotChecked, Report, Route, Site, User,
-    dependents, findings, folder_of, introduced, items, module_of, parse_line, parse_route, selected, untouched, use_sites, users,
+    BLOCKING_HEADS, FINDING_HEADS, MARKER, WORKING_TREE, ChangedFile, ChangedItem, Dependent, Finding, Item, NotChecked, Report, Route, Site, User,
+    checked_modules, dependents, findings, folder_of, introduced, items, module_of, parse_line, parse_route, selected, untouched,
+    use_sites, users,
 )
 from wingbox_report import (  # noqa: E402,F401
     COMMENT_LIMIT, FACADE_FILES, FAIL_ON, FOLDER_LIMIT, LIST_LIMIT, MAP_ARTIFACT, SUMMARY_LIMIT, build_comment, build_plan,
@@ -105,8 +115,13 @@ def changed_items(root: str, changed: ChangedFile, hunks: tuple[wingbox_changes.
         return None, False, budget
     listed = items(_wingbox(root, "module", changed.module))
     touched, other = wingbox_changes.touched_items(listed, hunks, source, changed.path)
-    waiting: list[tuple[Item, tuple[str, ...]]] = [(item, ()) for item in touched]
-    seen = {(item.name, item.line) for item in touched}
+    waiting: list[tuple[Item, tuple[str, ...]]] = []
+    seen: set[str] = set()
+    for item in touched:                 # two definitions of one name (overloads) are one item
+        if item.name not in seen:
+            seen.add(item.name)
+            waiting.append((item, ()))
+    class_users: dict[str, Optional[set[str]]] = {}    # per class: the modules that use it (None: not known)
     found: list[ChangedItem] = []
     while waiting:
         if budget <= 0:
@@ -117,6 +132,28 @@ def changed_items(root: str, changed: ChangedFile, hunks: tuple[wingbox_changes.
         answer = _wingbox(root, "usages", target, "--sexp", "--all")
         sites = use_sites(answer, target)
         using = users(answer, target, changed_modules)
+        if item.kind == "method":
+            # A call of a method is often a call of that NAME (the receiver's type is not known): it counts
+            # when the module also uses the class.
+            owner = item.name.split(".", 1)[0]
+            if owner not in class_users:
+                if budget <= 0:
+                    return None, False, 0
+                budget -= 1
+                owner_target = f"{changed.module}::{owner}"
+                owner_sites = use_sites(_wingbox(root, "usages", owner_target, "--sexp", "--all"), owner_target)
+                class_users[owner] = None if owner_sites is None else {site.module for site in owner_sites}
+            known = class_users[owner]
+            if sites is None or using is None or known is None:
+                # Wingbox has no answer for the method: the change is reported as a change of its class.
+                whole = next((listed_item for listed_item in listed if listed_item.name == owner), None)
+                if whole is None:
+                    other = True
+                elif whole.name not in seen:
+                    seen.add(whole.name)
+                    waiting.append((whole, via))
+                continue
+            using = tuple(user for user in using if user.module in known)
         if sites is None or using is None:
             other = True
             continue
@@ -127,20 +164,30 @@ def changed_items(root: str, changed: ChangedFile, hunks: tuple[wingbox_changes.
             if site.module != changed.module or not site.line or site.kind != "call":
                 continue
             caller = wingbox_changes.holder(listed, source, changed.path, site.line)
-            if caller is not None and (caller.name, caller.line) not in seen:
-                seen.add((caller.name, caller.line))
+            if caller is not None and caller.name not in seen:
+                seen.add(caller.name)
                 waiting.append((caller, (item.name, *via)))
     return tuple(sorted(found, key=lambda item: item.line)), other, budget
 
 
 def collect(root: str, base: str, head: str, hops: int, patterns: list[str], version: str) -> Report:
-    """Build the graphs of head (root) and base (a worktree) and gather the report's data."""
-    names = [line for line in _git(root, "diff", "--name-only", f"{base}...{head}").splitlines() if line]
+    """Build the graphs of head (root) and base (a worktree) and gather the report's data.
+
+    head is a commit, or WORKING_TREE: then the change is the merge base of base and HEAD against the files of
+    root as they are on disk, uncommitted and untracked ones included, and nothing is committed."""
+    working = head == WORKING_TREE
+    merge_base = _git(root, "merge-base", base, "HEAD" if working else head).strip()
+    if working:
+        untracked = [line for line in _git(root, "ls-files", "--others", "--exclude-standard").splitlines() if line]
+        names = list(dict.fromkeys([line for line in _git(root, "diff", "--name-only", merge_base).splitlines() if line] + untracked))
+    else:
+        untracked = []
+        names = [line for line in _git(root, "diff", "--name-only", f"{base}...{head}").splitlines() if line]
     changed_paths, skipped = selected(names, patterns)
-    head_findings, not_checked = findings(_boundaries(root))
+    head_lines = _boundaries(root)
+    head_findings, not_checked = findings(head_lines)
     with tempfile.TemporaryDirectory() as tmp:
         worktree = os.path.join(tmp, "base")
-        merge_base = _git(root, "merge-base", base, head).strip()
         _git(root, "worktree", "add", "--detach", worktree, merge_base)
         try:
             base_findings, _ = findings(_boundaries(worktree))
@@ -155,7 +202,12 @@ def collect(root: str, base: str, head: str, hops: int, patterns: list[str], ver
         if module is not None:
             changed_modules.add(module)
         changed.append(ChangedFile(path, module, ()) if module is None else ChangedFile(path, module, tuple(found)))
-    hunks = wingbox_changes.hunks(_git(root, "diff", "-U0", "--no-color", "--no-ext-diff", f"{base}...{head}"))
+    hunks = wingbox_changes.hunks(_git(root, "diff", "-U0", "--no-color", "--no-ext-diff", merge_base if working else f"{base}...{head}"))
+    for path in untracked:
+        try:
+            hunks[path] = wingbox_changes.added_file((Path(root) / path).read_text(encoding="utf-8-sig", errors="replace"))
+        except OSError:
+            pass
     bent = changed_tests({c.path: (c.module, c.untouched) for c in changed}, hunks)   # untouched still holds every dependent here
     hashes = []
     for c in changed:
@@ -176,7 +228,8 @@ def collect(root: str, base: str, head: str, hops: int, patterns: list[str], ver
         final_list.append(ChangedFile(c.path, c.module, untouched(list(c.untouched), changed_modules), inside, other))
     final = tuple(final_list)
     return Report(version, hops, base, head, final, tuple(new), resolved, tuple(not_checked), tuple(skipped),
-                  tests_changed=bent, tool_errors=tuple(dict.fromkeys(TOOL_ERRORS)), hashes=tuple(hashes))
+                  tests_changed=bent, tool_errors=tuple(dict.fromkeys(TOOL_ERRORS)), hashes=tuple(hashes),
+                  checked_modules=checked_modules(head_lines))
 
 
 def copy_map(root: str, folder: str) -> str:
@@ -222,9 +275,26 @@ def _append(path: str, text: str) -> None:
         stream.write(text)
 
 
-def main() -> int:
+def settings(argv: list[str], env: Any, pull: dict[str, Any]) -> tuple[str, str, str, str]:
+    """(repository folder, base, head, output folder): a key of the command line before the environment
+    variable, before the pull request event, before the default. With `--base` given as a key and no head
+    anywhere, the head is the working directory."""
+    parser = argparse.ArgumentParser(prog="wingbox_pr.py", description="Check a pull request, or a working directory before a commit.")
+    parser.add_argument("--root", help="the repository to check (default: WINGBOX_ROOT, else the current directory)")
+    parser.add_argument("--base", help="the commit or branch to compare with")
+    parser.add_argument("--head", help="the commit to check (default with --base: the working directory as it is on disk)")
+    parser.add_argument("--out", help="the folder for wingbox-report.md and wingbox-plan.sexp")
+    args = parser.parse_args(argv)
+    root = args.root or env.get("WINGBOX_ROOT") or os.getcwd()
+    base = args.base or env.get("WINGBOX_BASE") or pull.get("base", {}).get("sha", "")
+    head = (args.head or env.get("WINGBOX_HEAD") or pull.get("head", {}).get("sha", "")
+            or (WORKING_TREE if args.base else "HEAD"))
+    out = args.out or env.get("RUNNER_TEMP") or tempfile.gettempdir()
+    return root, base, head, out
+
+
+def main(argv: Optional[list[str]] = None) -> int:
     env = os.environ
-    root = env.get("WINGBOX_ROOT") or os.getcwd()
     fail_on = env.get("WINGBOX_FAIL_ON", "none")
     if fail_on not in FAIL_ON:
         print(f"::error::fail-on must be one of {', '.join(FAIL_ON)}, not {fail_on!r}")
@@ -233,16 +303,16 @@ def main() -> int:
     if env.get("GITHUB_EVENT_PATH") and os.path.isfile(env["GITHUB_EVENT_PATH"]):
         event = json.loads(Path(env["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))
     pull = event.get("pull_request") or {}
-    base = env.get("WINGBOX_BASE") or pull.get("base", {}).get("sha", "")
-    head = env.get("WINGBOX_HEAD") or pull.get("head", {}).get("sha", "") or "HEAD"
+    root, base, head, temp = settings(sys.argv[1:] if argv is None else argv, env, pull)
+    root = os.path.abspath(root)
+    os.makedirs(temp, exist_ok=True)
     if not base:
-        print("::error::no base commit: run the action on pull_request, or give the base input")
+        print("::error::no base commit: run the action on pull_request, or give the base input (by hand: --base REF)")
         return 2
     if _run(["git", "cat-file", "-e", f"{base}^{{commit}}"], root).returncode != 0:
         print("::error::the base commit is not in the checkout: use actions/checkout with fetch-depth: 0")
         return 2
     patterns = [p.strip() for p in env.get("WINGBOX_PATHS", "").splitlines() if p.strip()]
-    temp = env.get("RUNNER_TEMP") or tempfile.gettempdir()
     upload_map = env.get("WINGBOX_UPLOAD_MAP", "false") == "true"
     report = collect(root, base, head, int(env.get("WINGBOX_HOPS", "2")), patterns, env.get("WINGBOX_VERSION", "?"))
     map_path = copy_map(root, temp) if upload_map else ""

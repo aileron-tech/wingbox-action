@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Changes
+
+- A change inside one method of a class is reported as that method
+  (`Class.method`) with the modules that use the class and call it, not as a
+  change of the whole class with every user of the class.
+- Next to the parts that were not checked the report says on how many modules
+  the boundary rules were checked.
+- Check a working directory before a commit: `python wingbox_pr.py --root DIR
+  --base REF [--head REF] [--out DIR]`. With `--base` and no head the change is
+  the base against the files on disk, uncommitted and untracked ones included;
+  nothing is committed.
+
 ## 1.3.0 - 2026-11-18
 
 ### Changes
