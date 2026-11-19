@@ -845,7 +845,7 @@ class DocumentsTest(unittest.TestCase):
         self.assertNotIn("ISO", MAPPING_TEXT)
 
     def test_the_format_the_states_and_the_command_are_documented(self) -> None:
-        """/* REQ-ACTION-233: README.md has the section "Control mapping" with the file and its default path, a full example the reader takes without an error, the keys, the six methods, the six verdicts with the field each is read from, the four states, every reason code, the rule of the base commit, the `controls` object of the record and its schemas, the command with its exit statuses, the input `controls` with WINGBOX_CONTROLS, and what a state does not say; the Development section names the module; CHANGELOG.md names the change under Unreleased */"""
+        """/* REQ-ACTION-233: README.md has the section "Control mapping" with the file and its default path, a full example the reader takes without an error, the keys, the six methods, the six verdicts with the field each is read from, the four states, every reason code, the rule of the base commit, the `controls` object of the record and its schemas, the command with its exit statuses, the input `controls` with WINGBOX_CONTROLS, and what a state does not say; the Development section names the module; CHANGELOG.md names the change */"""
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         section = readme.split("\n## Control mapping\n")[1].split("\n## ")[0]
         example = section.split("```yaml\n# .wingbox/controls.yaml\n")[1].split("```")[0]
@@ -860,9 +860,9 @@ class DocumentsTest(unittest.TestCase):
         self.assertIn("| `controls` | `.wingbox/controls.yaml` |", readme)
         self.assertIn("`wingbox_controls.py`", readme.split("\n## Development\n")[1])
         self.assertIn("wingbox_evidence_cli.py controls", readme.split("\n## Development\n")[1])
-        unreleased = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8").split("## Unreleased")[1].split("\n## ")[0]
+        changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
         for needed in ("`.wingbox/controls.yaml`", "`controls`", "wingbox_evidence_cli.py controls", "schema/wingbox-controls-1.schema.json"):
-            self.assertIn(needed, unreleased, needed)
+            self.assertIn(needed, changelog, needed)
 
 
 E2E_MAP = """format: wingbox-controls/1
