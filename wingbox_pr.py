@@ -51,13 +51,14 @@ import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Mapping, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))   # the modules next to this file, however it is loaded
 
 import wingbox_changes  # noqa: E402
 import wingbox_coverage  # noqa: E402
 import wingbox_evidence  # noqa: E402
+import wingbox_evidence_cli  # noqa: E402
 import wingbox_policy  # noqa: E402
 import wingbox_tests  # noqa: E402
 import wingbox_verdicts  # noqa: E402
@@ -764,6 +765,33 @@ def write_evidence(report: Report, run: wingbox_evidence.Run, folder: str, docum
     return path
 
 
+def write_package(env: Any, folder: str, root: str, named: Mapping[str, str], say: Callable[[str], None] = print) -> tuple[str, str, int]:
+    """With WINGBOX_PACKAGE true, the evidence package of the run whose record is in folder, written beside it:
+    (its path, `complete` or `incomplete`, the exit status it gives the run: 1 for an incomplete package).
+    The test reports are read where the run read them, the policy files from the commit checked in root, and
+    named are the policy files the settings of the run name (wingbox_policy.named). Otherwise ("", "", 0), and
+    nothing is written or said."""
+    if env.get("WINGBOX_PACKAGE", "false") != "true":
+        return "", "", 0
+    target = os.path.join(folder, wingbox_evidence_cli.PACKAGE_FILE)
+    if os.path.lexists(target):
+        os.remove(target)      # of an earlier run in the same folder: a run writes its own outputs anew
+    try:
+        status, lines = wingbox_evidence_cli.pack_run(folder, target, root, env.get("WINGBOX_TEST_RESULTS_ROOT") or root,
+                                                      named=sorted(named.items()))
+    except wingbox_evidence_cli.Usage as error:
+        say(f"Wingbox: no evidence package: {error}")
+        return "", "", 1
+    for line in lines:
+        say(line)
+    return target, "complete" if status == 0 else "incomplete", status
+
+
+def _package_outputs(path: str, state: str) -> str:
+    """The outputs `package` and `package-state` as lines of GITHUB_OUTPUT; nothing when no package was asked for."""
+    return f"package={path}\npackage-state={state}\n" if state else ""
+
+
 def _append(path: str, text: str) -> None:
     with open(path, "a", encoding="utf-8", newline="\n") as stream:
         stream.write(text)
@@ -791,16 +819,19 @@ NOT_RUN_KEY = "--did-not-run"
 
 
 def did_not_run(args: list[str], env: Any, pull: dict[str, Any]) -> int:
-    """Write the record of a check that did not run, and its outputs; 0. The last step of the action calls
-    this when the check step left no record, so that a job that hands records over always has one."""
-    _root, base, head, temp = settings(args, env, pull)
+    """Write the record of a check that did not run, and its outputs; 0, or 1 when an evidence package was asked
+    for and is incomplete. The last step of the action calls this when the check step left no record, so that a
+    job that hands records over always has one."""
+    root, base, head, temp = settings(args, env, pull)
     os.makedirs(temp, exist_ok=True)
     report = not_run_report(base, "" if head == "HEAD" and not env.get("WINGBOX_HEAD") else head, env)
     path = write_evidence(report, github_run(env, str(pull.get("number") or "")), temp, {})
+    package_path, package_state, package_status = write_package(env, temp, root, wingbox_policy.named(env))
     if env.get("GITHUB_OUTPUT"):
-        _append(env["GITHUB_OUTPUT"], f"evidence={path}\n" + "".join(f"{name}={value}\n" for name, value in outputs(report).items()))
+        _append(env["GITHUB_OUTPUT"], f"evidence={path}\n" + "".join(f"{name}={value}\n" for name, value in outputs(report).items())
+                + _package_outputs(package_path, package_state))
     print(f"Wingbox: the check did not run; the record that says so is {path}")
-    return 0
+    return package_status
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -859,11 +890,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     Path(plan_path).write_text(plan, encoding="utf-8", newline="\n")
     evidence_path = write_evidence(report, github_run(env, str(pull.get("number") or "")), temp,
                                    {"wingbox-report.md": summary, "wingbox-plan.sexp": plan})
+    package_path, package_state, package_status = write_package(env, temp, root, wingbox_policy.named(env))
     values = outputs(report)
     outcome, execution, reasons = values["result"], values["execution"], values["reasons"]
     if env.get("GITHUB_OUTPUT"):
         _append(env["GITHUB_OUTPUT"], f"report={report_path}\nmap={map_path}\nplan={plan_path}\nevidence={evidence_path}\n"
-                                      + "".join(f"{name}={value}\n" for name, value in values.items()))
+                                      + "".join(f"{name}={value}\n" for name, value in values.items())
+                                      + _package_outputs(package_path, package_state))
     print(comment)
     print(f"Result of the boundary check: {outcome} (execution {execution})" + (f": {reasons}" if reasons else ""))
     if env.get("WINGBOX_COMMENT", "true") == "true" and pull.get("number"):
@@ -873,7 +906,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         except (urllib.error.URLError, KeyError, ValueError) as error:
             # A pull request from a fork gets a read-only token: the summary still holds the report.
             print(f"::warning::could not write the pull request comment ({error}); the report is in the job summary")
-    return max(fail_on_status(report, fail_on), tests_failed(report, env), policy_failed(report))
+    return max(fail_on_status(report, fail_on), tests_failed(report, env), policy_failed(report), package_status)
 
 
 if __name__ == "__main__":

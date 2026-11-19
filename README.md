@@ -657,6 +657,148 @@ a box. If that is still too much, the largest boxes are kept and the line
 under the diagram says how many modules, files and arrows are not drawn. The
 same pull request always gives the same diagram.
 
+## The evidence package
+
+A run leaves three loose files. With `package: true` (in GitLab `WINGBOX_PACKAGE: "true"`) it also
+writes one archive that stands on its own, `wingbox-package.zip` (output `package`, in GitLab in
+`wingbox-out/`): the record, the report and the plan, the test reports the record names as they are
+on disk, the policy files as the commit checked holds them, the schemas, and `manifest.json`, which
+names every member. A reviewer who was not there can check it without the CI system.
+
+The package is built and checked by a command of this repository, usable in CI and by hand. The
+library that will carry it installs the same command under the name `wingbox-evidence`.
+
+```bash
+python wingbox_evidence_cli.py pack --run-dir DIR --out package.zip [--repo DIR] [--reports-root DIR] [--job-log FILE] [--policy PATH] [--workflow PATH] [--stated NAME=VALUE] [--retention TEXT]
+python wingbox_evidence_cli.py verify package.zip [--repo DIR] [--manifest-sha256 HEX] [--json]
+python wingbox_evidence_cli.py review package.zip --reviewer NAME --decision accepted|rejected --grounds TEXT [--time UTC]
+```
+
+| Exit status | Meaning | Last line of the output |
+|---|---|---|
+| 0 | the command did its work and the result is good | `pack: complete`, `verify: ok`, `review: recorded` |
+| 1 | the command did its work and found a defect | `pack: incomplete (...)`, `verify: failed (...)`, `review: not recorded (...)` |
+| 2 | wrong usage: an option, a file that is not there, an archive that would be written over | nothing on the standard output; the reason on the error stream |
+
+**`pack`** reads the run folder (`wingbox-evidence.json` and the documents it names), copies each
+test report the record names byte for byte from `--reports-root` (default `--repo`), with the
+sidecar beside it, and the job log when `--job-log` gives one. A path of the record that leads out
+of that folder is not read. The policy files come from the commit the record says was checked, as
+`git show <commit>:<path>` gives them, never from the working folder: `.wingbox/baseline.sexp`,
+`.wingbox/config.yaml`, `.wingbox/learned.sexp`, `.wingbox/required-tests.yaml`, the files the
+record says the change edits, the manifest of required tests it read, and the ones named with
+`--policy` and `--workflow` (the CI configuration that ran the job; the action names its workflow
+file). `--stated` records a version the job states (`build`, `model`, `prompt`, `tool-schema`,
+`test-data`) and `--retention` how long the job keeps the package, both as given. `pack` reads no
+clock: the time in the manifest is the time of the record. It never writes over a file.
+
+Members of the archive:
+
+| Member | What it is |
+|---|---|
+| `manifest.json` | the manifest, first in the archive |
+| `record/wingbox-evidence.json`, `record/wingbox-report.md`, `record/wingbox-plan.sexp` | the record and the documents it names |
+| `sources/test-reports/<path>`, `<path>.run.json` | each test report the record names, and its sidecar, as on disk |
+| `sources/job-log/<name>` | the job log, when given |
+| `policy/<path>` | each policy file as the commit checked holds it |
+| `schema/*.schema.json` | the schemas of the record, the manifest and the review |
+| `reviews/0001.json`, ... | the decisions of reviewers, added by `review` |
+
+A member name is a safe relative path: a character outside `A-Z a-z 0-9 . _ -` of a path of the
+repository is written `%XX`.
+
+**The manifest** ([`schema/wingbox-package-1.schema.json`](schema/wingbox-package-1.schema.json),
+`"schema": "wingbox-package/1"`) holds: the bundle id (the SHA-256 of the lines `<sha256>  <path>`
+of the members by path, what `sha256sum` prints); `state`; the time, the tool, the subject and the
+run with its address, taken from the record; `retention` and `stated`; `control`, marked
+`"mapping": "none"` with empty values until a control mapping is given; `policy` (the commit, and
+each policy file as `present`, `not-in-commit` or `not-read`); `checks`; `members` (each with id,
+path, role, media type, length, SHA-256, whether it is required, its source and, for a policy file,
+its commit); `required` (each as `present`, `absent`, `differs` or `unreadable`); `optional` (the
+job log); `absent`; `statements`; `attestation`.
+
+Required are the record, every document and every test report the record names (each with the
+SHA-256 the record gives for it), the schemas, and that the commit checked could be read for its
+policy files. A required member that is not there, or is there with other bytes, makes the package
+`incomplete`: the manifest says so and `pack` ends with status 1. The package is written all the same.
+
+`checks` lists every required test and every test that uses what changed with its exact
+identifier and one outcome, and each recorded case with one:
+
+| In the record | Outcome |
+|---|---|
+| `passed` | PASS |
+| `failed` | FAIL |
+| `skipped` | SKIP |
+| `no-record`: the reports given hold no record of it | NOT RUN |
+| `none`: no test report was given | UNKNOWN |
+| `partial`: a case passed, another was skipped or has no record | NOT RUN when a case has no record, else SKIP |
+
+Three statements stay apart, in the manifest and in what `verify` prints: the record states which
+checks ran and how each ended; a review states that a person accepted or rejected the evidence;
+nothing in a package states that a control conforms.
+
+**The archive** is a zip file in one fixed form, so the same inputs give the same bytes and a
+package can be built again and compared: the manifest first, then the members by path, then the
+reviews; every member stored without compression (a compressor may give other bytes on another
+machine), dated 1980-01-01 00:00:00, with no extra field and no comment, as a regular file.
+
+**`verify`** reads the archive in memory. It unpacks nothing and runs nothing, and needs neither
+the repository nor the CI system. It ends with status 0 only when everything matches:
+
+| Problem | Meaning |
+|---|---|
+| `archive` | not an archive of this form: a compressed or encrypted member, a comment, bytes that belong to no member |
+| `unsafe-member-name`, `link-member` | a member name that is absolute, leaves the folder, holds a backslash or a colon; a symbolic link |
+| `too-large` | larger than `--max-bytes` (default 256 MiB) |
+| `missing-member`, `altered-member`, `duplicate-member`, `unexpected-member` | a member the manifest names is not there, has other bytes, is there twice; a member the manifest does not name |
+| `manifest-invalid`, `manifest-mismatch` | the manifest does not meet its schema; computed again from the members it is not the same |
+| `manifest-digest` | the manifest is not the one whose SHA-256 was given with `--manifest-sha256` |
+| `review-invalid` | a review is not a review record, is about another manifest, or the review before it was removed or changed |
+| `incomplete` | the manifest itself says a required member is absent |
+| `commit-not-found`, `policy-differs-from-commit`, `file-differs-from-commit`, `not-recomputable` | with `--repo`: the repository lacks the commit; a policy file or a changed file of the record is not what the commit holds |
+
+With `--repo DIR` it also reads every policy file and every changed file of the record from the
+commit named and compares the SHA-256. `--json` prints the check as one value.
+
+**`review`** adds the decision of a person as the member `reviews/NNNN.json`
+([`schema/wingbox-review-1.schema.json`](schema/wingbox-review-1.schema.json)): its number, the
+SHA-256 of the manifest reviewed, the bundle id, the reviewer, `accepted` or `rejected`, the
+grounds, the time (`--time`, else now) and the SHA-256 of the review before it. Every earlier
+member keeps its bytes and its place; only the directory at the end of the archive is written
+again. A package that does not verify is not reviewed. An incomplete one can be: the decision is
+the reviewer's.
+
+What a matching digest shows, and what it does not. `verify` shows that the bytes are what the
+manifest says and that the manifest is what its members give. It does not show who made the
+package: the manifest holds neither its own digest nor a signature, so someone who can write the
+archive can replace it whole, or drop its last review. Note the `manifest-sha256` that `pack`
+and `verify` print somewhere the archive is not kept, and give it back with `--manifest-sha256`.
+A detached attestation of the manifest has its place, the member
+`attestation/manifest.json.attestation` (named in the manifest under `attestation`): `pack` writes
+none and `verify` reports one as present and not checked. Signing with keys is not part of this
+command.
+
+In a workflow:
+
+```yaml
+      - uses: aileron-tech/wingbox-action@v1
+        id: wingbox
+        with:
+          package: true
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: wingbox-package
+          path: ${{ steps.wingbox.outputs.package }}
+```
+
+The step fails when the package is incomplete (`package-state` says `incomplete`, and the log
+names what is absent). The action has no access to the log of its own job; add it by hand with
+`pack --job-log` where the CI system hands it out. When the check did not run, the package holds
+the record that says so, and the policy files of the head it names; that step of the action reads
+the commit from the workspace folder, so with another `working-directory` its package is incomplete.
+
 ## Inputs
 
 | Input | Default | Meaning |
@@ -678,6 +820,7 @@ same pull request always gives the same diagram.
 | `test-step-outcome` | none | How the test step of the job ended: `success`, `failure`, `cancelled` or `skipped`. Give it `${{ steps.tests.outcome }}` of a test step with `continue-on-error: true`. After `failure` the test evidence is `failed`. |
 | `test-command` | none | The command of the test step that wrote the test results. Recorded verbatim in the evidence record; not run. |
 | `require-test-provenance` | `false` | Refuse a test report without a matching sidecar. See [Where a test report comes from](#where-a-test-report-comes-from). |
+| `package` | `false` | `true`: also write the evidence package of the run, `wingbox-package.zip`. An incomplete package fails the step. See [The evidence package](#the-evidence-package). |
 | `github-token` | `github.token` | Token for the comment. |
 
 ## Outputs
@@ -697,6 +840,8 @@ same pull request always gives the same diagram.
 | `eligible` | `true` when no verdict is failed, unknown, incomplete or expired, else `false`. See [Verdicts](#verdicts). |
 | `plan` | Path of the review plan (S-expression lines) on the runner. |
 | `evidence` | Path of the evidence record of the run (`wingbox-evidence.json`). Written also when the check did not run. |
+| `package` | Path of the evidence package of the run (`wingbox-package.zip`); empty unless `package` is `true`. |
+| `package-state` | `complete`, or `incomplete` when a required member of the package is absent; empty unless `package` is `true`. |
 | `result` | `PASS`, `FAIL`, `UNKNOWN` or `NOT_APPLICABLE`: the result of the boundary check. |
 | `execution` | `ok`, or `error` when a wingbox command ended abnormally. |
 | `reasons` | The reasons of the result, separated by semicolons; empty for `PASS`. |
@@ -737,6 +882,9 @@ What it leaves:
 
 - `wingbox-out/wingbox-report.md`, `wingbox-out/wingbox-plan.sexp` (the review plan for an
   agent) and `wingbox-out/wingbox-evidence.json` (the evidence record) as job artifacts;
+- with `WINGBOX_PACKAGE: "true"`, `wingbox-out/wingbox-package.zip`, the
+  [evidence package](#the-evidence-package) of the run, and `WINGBOX_PACKAGE_STATE` (`complete` or
+  `incomplete`) in `wingbox.env`; an incomplete package fails the job;
 - `wingbox-out/wingbox.env` as a dotenv report, so later jobs of the pipeline read
   `WINGBOX_RESULT` (PASS, FAIL, UNKNOWN, NOT_APPLICABLE), `WINGBOX_EXECUTION`, `WINGBOX_REASONS`,
   `WINGBOX_TESTS_TO_RUN`, `WINGBOX_TESTS_PASSED`, `WINGBOX_TESTS_FAILED`,
@@ -764,6 +912,7 @@ wingbox:
     WINGBOX_REQUIRED_TESTS: "ci/required-tests.yaml"   # the manifest of required tests; default .wingbox/required-tests.yaml
     WINGBOX_TEST_COMMAND: "pytest --junitxml=test-results/junit.xml"   # recorded verbatim, not run
     WINGBOX_REQUIRE_TEST_PROVENANCE: "true"      # refuse a test report without a matching sidecar
+    WINGBOX_PACKAGE: "true"                      # also write wingbox-out/wingbox-package.zip, the evidence package
 ```
 
 To hand over test reports, let the job run the tests: `WINGBOX_TEST_SCRIPT` is the command that
@@ -816,6 +965,9 @@ then writes no comment, warns, and keeps the report in the job summary.
   checked out in a temporary git worktree that is removed; so is the head with
   the policy files of the base, when the pull request edits one.
 - **No image is uploaded** for the diagram: it is text in the comment.
+- **Nothing of an evidence package is run or unpacked.** `verify` and `review`
+  read the archive in memory; `pack` and `verify --repo` ask git for file
+  contents only (`git cat-file`).
 - **No artifact unless you ask.** With `upload-map: true` the map is stored as
   a workflow artifact of your own repository. How long it is kept is your
   setting (the artifact retention of the repository or organization); the
@@ -864,6 +1016,7 @@ then writes no comment, warns, and keeps the report in the job summary.
 ```bash
 python -m unittest discover -s tests          # the report, the diagram, the facts, the metadata
 python tests/make_fixture.py /tmp/fixture     # a repository with a base and a head commit
+python wingbox_evidence_cli.py verify package.zip   # check an evidence package (also: pack, review)
 python tools/replay.py CLONE BASE HEAD --out DIR   # the comment for a past pull request, locally
 python scripts/bump_version.py 0.10.1         # the default wingbox release (no argument: the newest on PyPI)
 ```
@@ -878,6 +1031,10 @@ fixture repository on Linux, macOS and Windows.
 the files the check is judged by, `wingbox_coverage.py` accounts for what was
 analysed, `wingbox_verdicts.py` keeps the verdicts apart, `wingbox_report.py` builds the report and `wingbox_diagram.py` the
 diagram, all pure functions.
+
+`wingbox_evidence_cli.py` is the I/O of the evidence package (files, `git cat-file`);
+`wingbox_package.py` holds its rules: the archive form, the manifest, the check and the review,
+pure, standard library only and with no import of another module of this repository.
 
 ## License
 
