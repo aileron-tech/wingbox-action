@@ -283,34 +283,116 @@ def collect(root: str, base: str, head: str, hops: int, patterns: list[str], ver
                   checked_modules=checked_modules(head_lines), skipped_languages=tuple(sorted(SKIPPED_LANGUAGES.items())), tree=tree)
 
 
-def read_test_results(folder: str, patterns: list[str]) -> tuple[Optional[tuple[wingbox_tests.Case, ...]],
-                                                                 tuple[wingbox_tests.TestReport, ...], tuple[tuple[str, str], ...]]:
+def utc(seconds: float) -> str:
+    """A time in seconds since 1970 as the record writes it: UTC, to the second."""
+    return datetime.datetime.fromtimestamp(int(seconds), datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def run_started(env: Any) -> tuple[str, int]:
+    """(the start of the run as the job knows it, UTC; the seconds a report may be older than that).
+
+    GitLab dates the pipeline and the job (CI_PIPELINE_CREATED_AT, CI_JOB_STARTED_AT) by the clock of its
+    server, so a report may be a few minutes older. GitHub gives a job no time: the start is the moment the
+    runner wrote the event file of the job, by the clock that also dates the reports. By hand: not known."""
+    for name in ("CI_PIPELINE_CREATED_AT", "CI_JOB_STARTED_AT"):
+        try:
+            if env.get(name):
+                return utc(datetime.datetime.fromisoformat(env[name]).timestamp()), 300
+        except ValueError:
+            continue
+    if env.get("GITHUB_ACTIONS") == "true" and env.get("GITHUB_EVENT_PATH"):
+        try:
+            return utc(os.stat(env["GITHUB_EVENT_PATH"]).st_mtime), 0
+        except OSError:
+            pass
+    return "", 0
+
+
+def test_origin(env: Any, report: Report) -> wingbox_tests.Origin:
+    """What the job knows of itself, to judge the test reports by: the commit checked, the start of the run,
+    the run and the attempt (GitHub) or the pipeline (GitLab), the test command given (WINGBOX_TEST_COMMAND,
+    verbatim) and whether a sidecar is required (WINGBOX_REQUIRE_TEST_PROVENANCE)."""
+    started, tolerance = run_started(env)
+    github = env.get("GITHUB_ACTIONS") == "true"
+    offset = datetime.datetime.now().astimezone().utcoffset()
+    return wingbox_tests.Origin(
+        commit=report.tree.commit if report.tree is not None else "", started=started, tolerance=tolerance,
+        run_id=env.get("GITHUB_RUN_ID", "") if github else env.get("CI_PIPELINE_ID", ""),
+        attempt=env.get("GITHUB_RUN_ATTEMPT", "") if github else "",
+        command=env.get("WINGBOX_TEST_COMMAND", ""), require_sidecar=env.get("WINGBOX_REQUIRE_TEST_PROVENANCE", "false") == "true",
+        utc_offset=int(offset.total_seconds()) if offset is not None else 0)
+
+
+test_origin.__test__ = False     # type: ignore[attr-defined]   # not a test case
+
+
+def tracked_files(folder: str, names: list[str]) -> Optional[set[str]]:
+    """Those of the files (paths from folder) that git tracks; None when folder is not in a git work tree."""
+    tracked: set[str] = set()
+    for start in range(0, len(names), 200):
+        done = subprocess.run(["git", "-c", "core.quotepath=off", "ls-files", "-z", "--", *names[start:start + 200]], cwd=folder, capture_output=True)
+        if done.returncode != 0:
+            return None
+        tracked.update(name for name in done.stdout.decode("utf-8", errors="replace").split("\0") if name)
+    return tracked
+
+
+def read_sidecar(path: Path) -> tuple[Optional[wingbox_tests.Sidecar], str]:
+    """(the sidecar beside a report, ""), (None, "") when there is none, or (None, why it could not be read)."""
+    beside = Path(wingbox_tests.sidecar_name(str(path)))
+    if not beside.is_file():
+        return None, ""
+    try:
+        with open(beside, "rb") as stream:
+            return wingbox_tests.parse_sidecar(stream.read(wingbox_tests.SIDECAR_LIMIT + 1))
+    except OSError as error:
+        return None, str(error)
+
+
+def read_test_results(folder: str, patterns: list[str], origin: Optional[wingbox_tests.Origin] = None) -> tuple[
+        Optional[tuple[wingbox_tests.Case, ...]], tuple[wingbox_tests.TestReport, ...], tuple[tuple[str, str], ...]]:
     """(the cases of the JUnit XML reports the patterns find under folder; the files read, each with the
     SHA-256 of its bytes; the files and patterns that gave nothing, with the reason). Without a pattern no
-    test report was given: (None, (), ())."""
+    test report was given: (None, (), ()).
+
+    With an origin each report is judged by what the job knows (wingbox_tests.refusals): it then carries its
+    modification time, whether git tracks it, the time and the commits it states and the state of its
+    sidecar, and the cases of a refused report are left out."""
     if not patterns:
         return None, (), ()
-    cases: list[wingbox_tests.Case] = []
-    reports: list[wingbox_tests.TestReport] = []
+    names: list[str] = []
     errors: list[tuple[str, str]] = []
-    seen: set[str] = set()
     for pattern in patterns:
         found = sorted(name.replace(os.sep, "/") for name in glob.glob(pattern, root_dir=folder, recursive=True)
-                       if os.path.isfile(os.path.join(folder, name)))
+                       if os.path.isfile(os.path.join(folder, name)) and not name.endswith(wingbox_tests.SIDECAR_ENDING))
         if not found:
             errors.append((pattern, "no file matches this pattern"))
-        for name in found:
-            if name in seen:
-                continue
-            seen.add(name)
-            try:
-                data = (Path(folder) / name).read_bytes()
-                read = wingbox_tests.parse_junit(data)
-            except (OSError, ValueError) as error:
-                errors.append((name, str(error)))
-                continue
+        names += [name for name in found if name not in names]
+    tracked = tracked_files(folder, names) if origin is not None and names else None
+    cases: list[wingbox_tests.Case] = []
+    reports: list[wingbox_tests.TestReport] = []
+    for name in names:
+        path = Path(folder) / name
+        try:
+            data = path.read_bytes()
+            read, stated = wingbox_tests.parse_report(data)
+            modified = utc(path.stat().st_mtime)
+        except (OSError, ValueError) as error:
+            errors.append((name, str(error)))
+            continue
+        digest = hashlib.sha256(data).hexdigest()
+        if origin is None:
             cases += read
-            reports.append(wingbox_tests.TestReport(name, hashlib.sha256(data).hexdigest(), len(read)))
+            reports.append(wingbox_tests.TestReport(name, digest, len(read)))
+            continue
+        known = wingbox_tests.UNKNOWN if tracked is None else wingbox_tests.TRACKED if name in tracked else wingbox_tests.UNTRACKED
+        sidecar, sidecar_error = read_sidecar(path)
+        refused = wingbox_tests.refusals(stated, modified, known, digest, sidecar, sidecar_error, origin)
+        if not refused:
+            cases += read
+        reports.append(wingbox_tests.TestReport(name, digest, len(read), refused, wingbox_tests.earliest(stated.timestamps, origin.utc_offset), modified, known,
+                                                stated.commits, wingbox_tests.sidecar_state(digest, sidecar, sidecar_error, origin)[0],
+                                                sidecar.command if sidecar is not None else ""))
     return tuple(cases), tuple(reports), tuple(errors)
 
 
@@ -364,16 +446,18 @@ def merge_base(root: str, report: Report) -> str:
 def with_test_results(report: Report, env: Any, root: str) -> Report:
     """The report with the test reports the job hands over (the patterns of WINGBOX_TEST_RESULTS, one per
     line, looked for under WINGBOX_TEST_RESULTS_ROOT, else under the repository) and with the tests the
-    manifest of the repository requires for this change (WINGBOX_REQUIRED_TESTS, else the default place)."""
+    manifest of the repository requires for this change (WINGBOX_REQUIRED_TESTS, else the default place).
+    Each report is judged by what the job knows of itself (test_origin); a refused one gives no case."""
     patterns = [p.strip() for p in env.get("WINGBOX_TEST_RESULTS", "").splitlines() if p.strip()]
-    cases, reports, errors = read_test_results(env.get("WINGBOX_TEST_RESULTS_ROOT") or root, patterns)
+    origin = test_origin(env, report)
+    cases, reports, errors = read_test_results(env.get("WINGBOX_TEST_RESULTS_ROOT") or root, patterns, origin)
     manifest = read_manifest(root, env.get("WINGBOX_REQUIRED_TESTS", ""), merge_base(root, report))
     required = (wingbox_tests.required_for(manifest.groups, [changed.path for changed in report.changed] + list(report.skipped))
                 if manifest is not None else ())
     names = [test.shown for test in tests_to_run(report)] + [item.test for item in required]
     functions = go_test_functions(root, names, list(cases)) if cases else ()
     return dataclasses.replace(report, test_cases=cases, test_reports=reports, test_report_errors=errors, test_functions=functions,
-                               tests_manifest=manifest, required_tests=required)
+                               tests_manifest=manifest, required_tests=required, test_origin=origin if patterns else None)
 
 
 def copy_map(root: str, folder: str) -> str:
@@ -450,7 +534,8 @@ def github_run(env: Any, change: str) -> wingbox_evidence.Run:
         return wingbox_evidence.Run("local", "", "", "", "", "", now())
     repository, run_id = env.get("GITHUB_REPOSITORY", ""), env.get("GITHUB_RUN_ID", "")
     url = f"{env.get('GITHUB_SERVER_URL', 'https://github.com')}/{repository}/actions/runs/{run_id}" if repository and run_id else ""
-    return wingbox_evidence.Run("github", repository, change, run_id, url, env.get("GITHUB_ACTION_REF", ""), now())
+    return wingbox_evidence.Run("github", repository, change, run_id, url, env.get("GITHUB_ACTION_REF", ""), now(),
+                                env.get("GITHUB_RUN_ATTEMPT", ""), env.get("GITHUB_JOB", ""))
 
 
 def write_evidence(report: Report, run: wingbox_evidence.Run, folder: str, documents: dict[str, str]) -> str:

@@ -8,7 +8,9 @@ pass, whatever the graph finds. Pure, standard library only: the files are read 
 """
 from __future__ import annotations
 
+import datetime
 import fnmatch
+import json
 import re
 import xml.etree.ElementTree as ElementTree
 from dataclasses import dataclass
@@ -19,6 +21,9 @@ PARTIAL = "partial"                # of a test file: a case passed, and another 
 STATUSES = (PASSED, FAILED, SKIPPED, NO_RECORD)    # of a case, in the order they are counted
 SIZE_LIMIT = 64 * 1024 * 1024      # bytes of one report file; a larger one is refused
 MANIFEST_PATH = ".wingbox/required-tests.yaml"   # the manifest of required tests, from the root of the repository
+SIDECAR_LIMIT = 64 * 1024          # bytes of the sidecar of a report
+SIDECAR_ENDING = ".run.json"       # the sidecar of a report: the name of the report with this ending
+TRACKED, UNTRACKED, UNKNOWN = "tracked", "untracked", "unknown"     # what git says of a report file
 # A file Wingbox reads as source code, by its ending.
 SOURCE_FILE = re.compile(r"\.(?:py|pyi|ts|tsx|mts|cts|js|jsx|mjs|cjs|rs|cs|java|kt|go|rb|php|dart|pas|pp)$")
 
@@ -35,11 +40,49 @@ class Case:
 
 @dataclass(frozen=True)
 class TestReport:
-    """A report file that was read: its path as given, the SHA-256 of its bytes, the cases it holds."""
+    """A report file that was read: its path as given, the SHA-256 of its bytes, the cases it holds; and,
+    when it was judged, where it comes from as far as the job knows, and why it was refused."""
     __test__ = False
     path: str
     sha256: str
     cases: int
+    refused: tuple[str, ...] = ()    # why it does not count as evidence; empty: it counts
+    timestamp: str = ""              # the earliest timestamp a suite of it states, as written
+    modified: str = ""               # the modification time of the file, UTC; "" when it was not judged
+    tracked: str = UNKNOWN           # TRACKED, UNTRACKED or UNKNOWN (the folder is not in a git work tree)
+    commits: tuple[str, ...] = ()    # the commits it names
+    sidecar: str = "none"            # none, matches, differs or unreadable
+    sidecar_command: str = ""        # the test command its sidecar states
+
+
+@dataclass(frozen=True)
+class Stated:
+    """What a report says of itself."""
+    timestamps: tuple[str, ...]      # the timestamp of each suite that has one, as written
+    commits: tuple[str, ...]         # the commits it names in a property or an attribute of a suite, as written
+
+
+@dataclass(frozen=True)
+class Sidecar:
+    """What the test step wrote beside a report (`<report>.run.json`) about the run that made it."""
+    commit: str
+    run_id: str
+    attempt: str
+    command: str
+    sha256: str                      # of the report
+
+
+@dataclass(frozen=True)
+class Origin:
+    """What the job knows of itself, to judge a report by."""
+    commit: str = ""                 # the commit checked; "" for a working directory
+    started: str = ""                # the start of the run as the job knows it, UTC (YYYY-MM-DDTHH:MM:SSZ); "" when not known
+    tolerance: int = 0               # seconds a report may be older than that: the start was dated by another machine's clock
+    run_id: str = ""                 # the run a sidecar must name; "" when not known
+    attempt: str = ""
+    command: str = ""                # the test command the job states, verbatim
+    require_sidecar: bool = False    # a report without a sidecar is refused
+    utc_offset: int = 0              # of this machine, seconds east of UTC: a timestamp without a zone may be local time or UTC
 
 
 @dataclass(frozen=True)
@@ -86,8 +129,23 @@ class Required:
     test: str
 
 
+# Names of a property or an attribute that state a commit, in lower case with every other character as `_`.
+_COMMIT_NAMES = frozenset({"commit", "commit_sha", "commit_id", "git_commit", "git_commit_sha", "git_commit_id", "git_sha", "git_revision",
+                           "sha", "revision", "vcs_revision", "github_sha", "ci_commit_sha", "build_vcs_number"})
+_COMMIT = re.compile(r"^[0-9a-fA-F]{7,64}$")
+
+
+def _names_commit(name: str, value: str) -> bool:
+    return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_") in _COMMIT_NAMES and bool(_COMMIT.match(value))
+
+
 def parse_junit(data: bytes) -> list[Case]:
-    """The test cases of one JUnit XML report. ValueError when the file is too large, declares a document
+    """The test cases of one JUnit XML report (see parse_report)."""
+    return parse_report(data)[0]
+
+
+def parse_report(data: bytes) -> tuple[list[Case], Stated]:
+    """(the test cases of one JUnit XML report, what the report says of itself). ValueError when the file is too large, declares a document
     type or entities (none is needed, and they are how an XML file grows on reading), or is not such a report."""
     if len(data) > SIZE_LIMIT:
         raise ValueError(f"larger than {SIZE_LIMIT // (1024 * 1024)} MB")
@@ -100,8 +158,20 @@ def parse_junit(data: bytes) -> list[Case]:
     if _local(root.tag) not in ("testsuites", "testsuite"):
         raise ValueError(f"not a JUnit report: its root is <{_local(root.tag)}>")
     cases: list[Case] = []
+    timestamps: list[str] = []
+    commits: list[str] = []
+
+    def said(node: ElementTree.Element) -> None:
+        """What a suite (or the root) says of itself: its timestamp, and a commit in an attribute or a property."""
+        if node.get("timestamp"):
+            timestamps.append(node.get("timestamp", ""))
+        named = list(node.attrib.items())
+        named += [(item.get("name", ""), item.get("value", "")) for group in node if _local(group.tag) == "properties"
+                  for item in group if _local(item.tag) == "property"]
+        commits.extend(value for name, value in named if _names_commit(name, value))
 
     def walk(node: ElementTree.Element, suite: str, file: str) -> None:
+        said(node)
         for child in node:
             tag = _local(child.tag)
             if tag == "testsuite":
@@ -112,7 +182,7 @@ def parse_junit(data: bytes) -> list[Case]:
                 cases.append(Case(_path(child.get("file", "") or file), child.get("classname", ""), suite, status, child.get("name", "")))
 
     walk(root, root.get("name", "") if _local(root.tag) == "testsuite" else "", root.get("file", "") if _local(root.tag) == "testsuite" else "")
-    return cases
+    return cases, Stated(tuple(timestamps), tuple(dict.fromkeys(commits)))
 
 
 def _local(tag: str) -> str:
@@ -359,3 +429,111 @@ def required_for(groups: tuple[Group, ...], changed: list[str]) -> tuple[Require
             for test in group.tests:
                 found.setdefault(test, Required(group.name, test))
     return tuple(found.values())
+
+
+# ---------------------------------------------------------------------------
+# Where a report comes from
+# ---------------------------------------------------------------------------
+# A report file proves what it holds, not where it comes from. The job knows a few things: whether git
+# tracks the file, when it was last modified, the time and the commit the report states, when the run began
+# and which commit was checked. A report that contradicts them is refused: it counts as no evidence.
+
+SIDECAR_KEYS = ("commit", "run-id", "attempt", "command", "sha256")
+
+
+def sidecar_name(report: str) -> str:
+    """The name of the sidecar of a report file."""
+    return report + SIDECAR_ENDING
+
+
+def parse_sidecar(data: bytes) -> tuple[Optional[Sidecar], str]:
+    """(the sidecar a test step wrote beside its report, ""), or (None, why it is not one): a JSON object
+    with the texts or whole numbers `commit`, `run-id`, `attempt`, `command` and `sha256`."""
+    if len(data) > SIDECAR_LIMIT:
+        return None, f"larger than {SIDECAR_LIMIT // 1024} KiB"
+    try:
+        read = json.loads(data.decode("utf-8-sig"))
+    except (ValueError, RecursionError):
+        return None, "not JSON"
+    if not isinstance(read, dict):
+        return None, "not a JSON object"
+    values = []
+    for key in SIDECAR_KEYS:
+        if key not in read:
+            return None, f"`{key}` is missing"
+        if isinstance(read[key], bool) or not isinstance(read[key], (str, int)):
+            return None, f"`{key}` is not a text or a whole number"
+        values.append(str(read[key]).strip() if key != "command" else str(read[key]))
+    return Sidecar(*values), ""
+
+
+def _same_commit(one: str, other: str) -> bool:
+    """Whether two names of a commit agree: equal, or one the abbreviation of the other."""
+    one, other = one.lower(), other.lower()
+    return bool(one) and bool(other) and (one.startswith(other) or other.startswith(one))
+
+
+def sidecar_state(digest: str, sidecar: Optional[Sidecar], error: str, origin: Origin) -> tuple[str, tuple[str, ...]]:
+    """(none, matches, differs or unreadable; how it differs). A sidecar matches when it holds the SHA-256
+    of the report, the commit checked, and the run and the attempt of this run, as far as the job knows
+    them."""
+    if sidecar is None:
+        return ("unreadable", (f"its sidecar could not be read: {error}",)) if error else ("none", ())
+    differs = []
+    if sidecar.sha256.lower() != digest.lower():
+        differs.append("its sidecar holds the SHA-256 of another file")
+    if origin.commit and not _same_commit(sidecar.commit, origin.commit):
+        differs.append(f"its sidecar names commit {sidecar.commit}, and the commit checked is {origin.commit}")
+    if (origin.run_id and sidecar.run_id != origin.run_id) or (origin.attempt and sidecar.attempt != origin.attempt):
+        differs.append(f"its sidecar names run {sidecar.run_id} attempt {sidecar.attempt}, and this is run {origin.run_id} attempt {origin.attempt}")
+    return ("differs", tuple(differs)) if differs else ("matches", ())
+
+
+def _moments(text: str, utc_offset: int) -> tuple[float, ...]:
+    """The moments a timestamp may mean, in seconds since 1970 UTC: one when it names its zone; without a
+    zone both readings, UTC and the local time of the machine. Empty when it is not a time."""
+    try:
+        read = datetime.datetime.fromisoformat(text.strip())
+    except ValueError:
+        return ()
+    if read.tzinfo is not None:
+        return (read.timestamp(),)
+    as_utc = read.replace(tzinfo=datetime.timezone.utc).timestamp()
+    return (as_utc, as_utc - utc_offset)
+
+
+def earliest(timestamps: tuple[str, ...], utc_offset: int = 0) -> str:
+    """The timestamp that is earliest in its latest reading, as written; the first one when none is a time."""
+    timed = [(max(_moments(text, utc_offset)), text) for text in timestamps if _moments(text, utc_offset)]
+    return min(timed)[1] if timed else (timestamps[0] if timestamps else "")
+
+
+def refusals(stated: Stated, modified: str, tracked: str, digest: str, sidecar: Optional[Sidecar], sidecar_error: str,
+             origin: Origin) -> tuple[str, ...]:
+    """Why a report does not count as evidence; empty when it does.
+
+    It is a file git tracks (a report of this run is written by the test step, not committed). Its sidecar
+    differs or cannot be read, or it has none where one is required. Its modification time, or the timestamp
+    of one of its suites, is before the start of the run: a sidecar that matches and names this run stands
+    in for that comparison (a report of an earlier job of the same run is older than this job). It names a
+    commit other than the commit checked."""
+    reasons = []
+    if tracked == TRACKED:
+        reasons.append("it is a file tracked by git")
+    state, differs = sidecar_state(digest, sidecar, sidecar_error, origin)
+    reasons += differs
+    if state == "none" and origin.require_sidecar:
+        reasons.append("it has no sidecar (`<report>.run.json`), which require-test-provenance asks for")
+    start = _moments(origin.started, 0) if origin.started else ()
+    if start and not (state == "matches" and origin.run_id):
+        limit = start[0] - origin.tolerance
+        then = _moments(modified, 0)
+        if then and then[0] < limit:
+            reasons.append(f"it was last modified {modified}, before the start of the run {origin.started}")
+        old = [text for text in stated.timestamps if _moments(text, origin.utc_offset) and max(_moments(text, origin.utc_offset)) < limit]
+        if old:
+            reasons.append(f"its timestamp {earliest(tuple(old), origin.utc_offset)} is before the start of the run {origin.started}")
+    if origin.commit:
+        reasons += [f"it names commit {commit}, and the commit checked is {origin.commit}" for commit in stated.commits
+                    if not _same_commit(commit, origin.commit)]
+    return tuple(reasons)

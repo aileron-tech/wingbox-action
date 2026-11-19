@@ -13,7 +13,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
-from wingbox_tests import Case, Manifest, Required, TestReport
+from wingbox_tests import Case, Manifest, Origin, Required, TestReport
 
 MARKER = "<!-- wingbox-pull-request-report -->"
 # The head of a check of a working directory: the files as they are on disk, not a commit.
@@ -155,6 +155,7 @@ class Report:
     test_functions: tuple[tuple[str, tuple[str, ...]], ...] = field(default=())   # (Go test to run, the functions Wingbox lists in it)
     tests_manifest: Optional[Manifest] = None                        # the manifest of required tests; None: the repository has none
     required_tests: tuple[Required, ...] = field(default=())         # the tests it requires for this change
+    test_origin: Optional[Origin] = None                             # what the job knows of itself, the test reports were judged by
     checked_modules: Optional[int] = None                            # modules the boundary rules were checked on, when known
     skipped_languages: tuple[tuple[str, int], ...] = field(default=())   # (language, files) left out: its parser is not installed
 

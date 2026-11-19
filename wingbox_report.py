@@ -417,7 +417,8 @@ def outputs(report: Report) -> dict[str, str]:
             "not-checked-parts": str(len(report.not_checked)), "tests-to-run": str(len(tests_to_run(report))),
             "tests-passed": passed, "tests-failed": failed, "tests-without-record": without,
             "tests-evidence": tests_summary(report), "tests-required": str(len(report.required_tests)),
-            "tests-required-passed": "" if needed is None else str(sum(1 for item in needed if item.status == wingbox_tests.PASSED))}
+            "tests-required-passed": "" if needed is None else str(sum(1 for item in needed if item.status == wingbox_tests.PASSED)),
+            "test-reports-refused": "" if report.test_cases is None else str(sum(1 for read in report.test_reports if read.refused))}
 
 
 def _evidence_words(recorded: tuple[wingbox_tests.Evidence, ...], full: bool) -> str:
@@ -516,7 +517,8 @@ def build_plan(report: Report) -> str:
     with their code, the parts not checked and the content hash of each changed file. For a reviewing agent:
     every `look` line is a place to open, every `run-test` line a test to run, every `required-test` line a
     test the manifest of the repository requires for this change, every `test-case` line a case the test
-    reports hold of such a test (or a test function of it that they do not hold)."""
+    reports hold of such a test (or a test function of it that they do not hold). A `test-report-refused`
+    line names a report that does not count as evidence, with the reasons."""
     outcome, execution, reasons = result(report)
     lines = [f"(review-plan :schema {PLAN_SCHEMA} :result {outcome} :execution {execution} :base {report.base} :head {report.head} "
              f":wingbox {_q(report.version)} :hops {report.hops}{_tree_keys(report.tree)})"]
@@ -556,7 +558,20 @@ def build_plan(report: Report) -> str:
                   for item in (*(recorded[test.shown] for test in tests_to_run(report) if test.shown in recorded), *(needed or ()))
                   for case in item.records]
     lines += list(dict.fromkeys(case_lines))     # a test that is to run and required has its cases once
-    lines += [f"(test-report {_q(read.path)} :sha256 {read.sha256} :cases {read.cases})" for read in report.test_reports]
+    if report.test_origin is not None:
+        known = report.test_origin
+        keys = [("commit", known.commit), ("started", known.started), ("run", known.run_id), ("attempt", known.attempt)]
+        lines.append("(test-provenance" + "".join(f" :{key} {_atom(value)}" for key, value in keys if value)
+                     + f" :sidecar {'required' if known.require_sidecar else 'optional'})")
+        if known.command:
+            lines.append(f"(test-command {_q(known.command)})")
+    for read in report.test_reports:
+        lines.append(f"(test-report-refused {_q(read.path)} :sha256 {read.sha256} :cases {read.cases} :reason {_q('; '.join(read.refused))})"
+                     if read.refused else f"(test-report {_q(read.path)} :sha256 {read.sha256} :cases {read.cases})")
+        if read.modified:
+            lines.append(f"(test-report-origin {_q(read.path)} :modified {read.modified}" + (f" :timestamp {_q(read.timestamp)}" if read.timestamp else "")
+                         + f" :tracked {read.tracked} :sidecar {read.sidecar}"
+                         + (f" :commits ({' '.join(_atom(commit) for commit in read.commits)})" if read.commits else "") + ")")
     lines += [f"(test-report-error {_q(path)} :reason {_q(reason)})" for path, reason in report.test_report_errors]
     lines += [f"(test-changed {_q(test)} :tests {_q(source)})" for test, source in report.tests_changed]
     lines += [f"(not-checked {_q(part.part)} :reason {_atom(part.reason)})" for part in report.not_checked]
@@ -735,6 +750,11 @@ def build_comment(report: Report, full: bool = False) -> str:
                           + ".", ""]
     elif report.test_cases is not None:
         lines += ["Tests that use what changed: none found." + ("" if report.required_tests else " The test reports say nothing about this change."), ""]
+    refused = [read for read in report.test_reports if read.refused]
+    if refused:
+        shown = refused if full else refused[:TESTS_LIMIT]
+        lines += ["Test reports refused, which do not count as evidence: " + "; ".join(f"{_code(read.path)} ({'; '.join(read.refused)})" for read in shown)
+                  + (f"; and {len(refused) - len(shown)} more" if len(refused) > len(shown) else "") + ".", ""]
     lines += _required_lines(report, full)
     if report.tests_changed:
         pairs = sorted(report.tests_changed) if full else sorted(report.tests_changed)[:LIST_LIMIT]

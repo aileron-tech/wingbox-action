@@ -145,7 +145,7 @@ def gitlab_run(env: Mapping[str, str]) -> "pr.wingbox_evidence.Run":
     if not env.get("CI_JOB_ID"):
         return pr.wingbox_evidence.Run("local", "", "", "", "", env.get("WINGBOX_ACTION_REF", ""), pr.now())
     return pr.wingbox_evidence.Run("gitlab", env.get("CI_PROJECT_PATH", ""), env.get("CI_MERGE_REQUEST_IID", ""), env.get("CI_JOB_ID", ""),
-                                   env.get("CI_JOB_URL", ""), env.get("WINGBOX_ACTION_REF", ""), pr.now())
+                                   env.get("CI_JOB_URL", ""), env.get("WINGBOX_ACTION_REF", ""), pr.now(), "", env.get("CI_JOB_NAME", ""))
 
 
 def _inside(root: str, out: Path) -> tuple[str, ...]:
