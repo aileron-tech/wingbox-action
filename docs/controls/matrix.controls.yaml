@@ -1,0 +1,233 @@
+# A reference example, not a mapping to use as it is. It holds the rows of docs/controls/matrix.md in the
+# format of a control mapping (wingbox-controls/1). Every control is a draft: a draft supports no claim, so
+# this file supports none by itself. A team copies a row into its own .wingbox/controls.yaml under its own
+# control id, sets its own scope, claim, limits and required evidence, and has the mapping approved.
+#
+# Status: DRAFT, not reviewed. Reviewed by: (pending). Review date: (pending).
+# Identifiers and titles checked on 2026-11-19 against the sources listed in docs/controls/matrix.md.
+# No text of a standard or of the criteria is copied: identifiers and titles only.
+format: wingbox-controls/1
+
+mapping:
+  name: "Reference matrix of docs/controls/matrix.md (example, draft)"
+  version: "draft-2026-11-19"
+  owner: "(the team that adopts a row)"
+
+controls:
+  ISO27001-5.3:
+    title: "Segregation of duties"
+    status: draft
+    method: configuration-check
+    claim: "The change edits no file it is checked by; when it does, the record lists the file and the findings are judged with the files of the base commit."
+    limits: "Does not show who approved anything, nor that duties are assigned."
+    references:
+      - framework: "ISO/IEC 27001"
+        edition: "2022"
+        reference: "Annex A 5.3 Segregation of duties"
+    scope-paths:
+      - "**"
+    requires-verdicts:
+      - policy-unchanged
+
+  ISO27001-5.33:
+    title: "Protection of records"
+    status: draft
+    method: operational-record
+    claim: "A changed or removed record of the check is detected: the package verifies against its manifest and the ledger against its chain."
+    limits: "Supports the detection of a change, not its prevention. Does not show storage, access or retention."
+    references:
+      - framework: "ISO/IEC 27001"
+        edition: "2022"
+        reference: "Annex A 5.33 Protection of records"
+    scope-paths:
+      - "**"
+
+  ISO27001-8.4:
+    title: "Access to source code"
+    status: draft
+    method: configuration-check
+    claim: "Every change of a file the check is judged by is recorded with its path and kind."
+    limits: "Does not show who can read or write the repository, nor that access is restricted."
+    references:
+      - framework: "ISO/IEC 27001"
+        edition: "2022"
+        reference: "Annex A 8.4 Access to source code"
+    scope-paths:
+      - "**"
+    requires-verdicts:
+      - policy-unchanged
+
+  ISO27001-8.25:
+    title: "Secure development life cycle"
+    status: draft
+    method: operational-record
+    claim: "Each change of the period has a record of the check, and the commits without one are listed."
+    limits: "Records that this check ran and how it ended. Does not show that a life cycle is defined or followed as a whole."
+    references:
+      - framework: "ISO/IEC 27001"
+        edition: "2022"
+        reference: "Annex A 8.25 Secure development life cycle"
+    scope-paths:
+      - "**"
+
+  ISO27001-8.27:
+    title: "Secure system architecture and engineering principles"
+    status: draft
+    method: static-analysis
+    claim: "The change introduces no violation of the declared architecture rules, the head holds none from before, no accepted break is past its end date, and every part was looked at."
+    limits: "Checks the rules the team declared. Does not show that the principles are sound, complete or about security."
+    references:
+      - framework: "ISO/IEC 27001"
+        edition: "2022"
+        reference: "Annex A 8.27 Secure system architecture and engineering principles"
+    scope-paths:
+      - "**"
+    requires-verdicts:
+      - boundaries-introduced
+      - boundaries-existing
+      - baseline
+      - coverage
+
+  ISO27001-8.29:
+    title: "Security testing in development and acceptance"
+    status: draft
+    method: executed-test
+    claim: "Every recorded case of every required test and of every test that uses what changed passed."
+    limits: "Does not show what a test asserts, nor that it is a security test. Add the groups of required tests that hold the security tests."
+    references:
+      - framework: "ISO/IEC 27001"
+        edition: "2022"
+        reference: "Annex A 8.29 Security testing in development and acceptance"
+    scope-paths:
+      - "**"
+    requires-verdicts:
+      - tests
+
+  ISO27001-8.32:
+    title: "Change management"
+    status: draft
+    method: static-analysis
+    claim: "The change went through the recorded check: no new violation, the tests complete, everything looked at, no file of the check edited."
+    limits: "A record per change of the repository. Does not show that a change was authorised, deployed or rolled back."
+    references:
+      - framework: "ISO/IEC 27001"
+        edition: "2022"
+        reference: "Annex A 8.32 Change management"
+    scope-paths:
+      - "**"
+    requires-verdicts:
+      - boundaries-introduced
+      - tests
+      - coverage
+      - policy-unchanged
+
+  ISO42001-A.4.2:
+    title: "Resource documentation"
+    status: draft
+    method: document-review
+    claim: "The package of a change states the versions of the build, the model, the prompts, the tool definitions and the test data the job named."
+    limits: "Records what the job states, as stated. Does not show that a stated version is the one in use."
+    references:
+      - framework: "ISO/IEC 42001"
+        edition: "2023"
+        reference: "Annex A A.4.2 Resource documentation"
+    scope-paths:
+      - "**"
+
+  ISO42001-A.6.2.3:
+    title: "Documentation of AI system design and development"
+    status: draft
+    method: static-analysis
+    claim: "The code keeps the architecture rules that were declared for it, at this change."
+    limits: "Does not show that a design is documented, nor anything about a model."
+    references:
+      - framework: "ISO/IEC 42001"
+        edition: "2023"
+        reference: "Annex A A.6.2.3 Documentation of AI system design and development"
+    scope-paths:
+      - "**"
+    requires-verdicts:
+      - boundaries-introduced
+      - coverage
+
+  ISO42001-A.6.2.4:
+    title: "AI system verification and validation"
+    status: draft
+    method: executed-test
+    claim: "Every recorded case of every required test and of every test that uses what changed passed."
+    limits: "Does not show that the tests evaluate a model, nor that the system is valid for its use."
+    references:
+      - framework: "ISO/IEC 42001"
+        edition: "2023"
+        reference: "Annex A A.6.2.4 AI system verification and validation"
+    scope-paths:
+      - "**"
+    requires-verdicts:
+      - tests
+
+  ISO42001-A.6.2.5:
+    title: "AI system deployment"
+    status: draft
+    method: static-analysis
+    claim: "The change that a release ships has a record in which no verdict is failed, unknown, incomplete or expired."
+    limits: "A record of a change before release. Does not show that anything was deployed, nor how a deployed system behaves."
+    references:
+      - framework: "ISO/IEC 42001"
+        edition: "2023"
+        reference: "Annex A A.6.2.5 AI system deployment"
+    scope-paths:
+      - "**"
+    requires-verdicts:
+      - boundaries-introduced
+      - boundaries-existing
+      - baseline
+      - tests
+      - coverage
+
+  TSC-CC4.1:
+    title: "Monitoring Activities"
+    status: draft
+    method: operational-record
+    claim: "The runs of a period are kept with their failures, the changes of the rules and the gaps."
+    limits: "A count of what was recorded. Does not conclude that a control operated effectively."
+    references:
+      - framework: "AICPA Trust Services Criteria"
+        edition: "2017, with revised points of focus 2022"
+        reference: "CC4.1 Monitoring Activities"
+    scope-paths:
+      - "**"
+
+  TSC-CC5.2:
+    title: "Control Activities"
+    status: draft
+    method: static-analysis
+    claim: "An automated check ran on the change and found no new violation, with the tests complete and everything looked at."
+    limits: "Records one automated check. Does not show that control activities were selected or that they cover the risks."
+    references:
+      - framework: "AICPA Trust Services Criteria"
+        edition: "2017, with revised points of focus 2022"
+        reference: "CC5.2 Control Activities"
+    scope-paths:
+      - "**"
+    requires-verdicts:
+      - boundaries-introduced
+      - tests
+      - coverage
+
+  TSC-CC8.1:
+    title: "Change Management"
+    status: draft
+    method: static-analysis
+    claim: "The change has a record of what was checked, tested and left out, and it edits no file of the check."
+    limits: "Does not show authorisation or deployment, and one record shows nothing about a period."
+    references:
+      - framework: "AICPA Trust Services Criteria"
+        edition: "2017, with revised points of focus 2022"
+        reference: "CC8.1 Change Management"
+    scope-paths:
+      - "**"
+    requires-verdicts:
+      - boundaries-introduced
+      - tests
+      - coverage
+      - policy-unchanged
