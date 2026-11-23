@@ -49,7 +49,7 @@ the tests gets no comment; the job summary says so in one line.
 
 The action uses [Wingbox](https://github.com/aileron-tech/wingbox), an
 open-source code graph that is built on the runner, and installs
-wingbox 0.17.0 from PyPI.
+wingbox 0.18.0 from PyPI.
 
 ## What the comment looks like
 
@@ -1187,7 +1187,7 @@ wingbox:
     WINGBOX_FAIL_ON: "strict"     # none (default), violations, not-checked, strict or existing
     WINGBOX_POLICY_CHANGE: "report"   # fail (default with strict) or report: a change of the baseline, the rules or the pipeline file
     WINGBOX_HOPS: "2"
-    WINGBOX_VERSION: "0.17.0"     # the wingbox release from PyPI
+    WINGBOX_VERSION: "0.18.0"     # the wingbox release from PyPI
     WINGBOX_ACTION_REF: "v1"      # the tag, branch or commit of this repository the scripts come from
     WINGBOX_TEST_SCRIPT: "pytest --junitxml=test-results/junit.xml"   # the tests of this job; they run first and their status is kept
     WINGBOX_TEST_RESULTS: "test-results/*.xml"   # JUnit XML reports of the tests this job ran before the check

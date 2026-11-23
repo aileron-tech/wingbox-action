@@ -1,5 +1,24 @@
 # Log
 
+## 2026-11-23: the default Wingbox release is 0.18.0
+
+What changed
+
+- `python scripts/bump_version.py 0.18.0`: the default of the `version` input in `action.yml`, the version the
+  README names and `WINGBOX_VERSION` in both GitLab templates.
+
+Why
+
+- Wingbox 0.18.0 was released. Its `--sexp` facts keep the form of 0.13.0; `impact` of a C or C++ source file
+  now lists the files that include its header, each row with `:basis paired-header`, so the review plan of a
+  pull request that changes such a file is no longer empty for it. The facts are read by key, so the new
+  value of `:basis` needs no change here.
+
+How it was checked
+
+- The unit tests of this repository with Wingbox 0.18.0 installed. The fixture job of the `test` workflow runs
+  the action with the new default on Linux, macOS and Windows before the tag is made.
+
 ## 2026-11-23: the default Wingbox release is 0.17.0
 
 What changed
