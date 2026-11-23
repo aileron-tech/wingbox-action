@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.6.2 - 2026-11-23
+
+### Changes
+
+- The default Wingbox release is 0.18.0. A changed C or C++ source file (`.c`, `.cc`, `.cpp`) now
+  has dependents in the review plan: the files that include its header, marked
+  `:basis paired-header`. With 0.17.0 such a file had none, because nothing includes it. A
+  repository with C or C++ files gets a larger review plan than before.
+
 ## 1.6.1 - 2026-11-23
 
 ### Changes
