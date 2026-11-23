@@ -19,7 +19,7 @@ wingbox:
   stage: test
   variables:
     GIT_DEPTH: "0"                    # the whole history: the base commit is checked out next to the head
-    WINGBOX_VERSION: "0.16.0"         # the wingbox release from PyPI
+    WINGBOX_VERSION: "0.17.0"         # the wingbox release from PyPI
     WINGBOX_ACTION_REF: "v1"          # the tag, branch or commit of aileron-tech/wingbox-action the scripts come from
     WINGBOX_IMAGE: "python:3.12"      # the image the check runs in (Python 3.11 or newer, with git)
     WINGBOX_HOPS: "2"

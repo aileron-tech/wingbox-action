@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.6.1 - 2026-11-23
+
+### Changes
+
+- The default Wingbox release is 0.17.0: C and C++ files are part of the graph, generated files
+  depend on their generators, and a Python package folder is taken before a module file of the
+  same name (0.16.1). A repository with C or C++ files gets a larger review plan than before.
+
 ## 1.6.0 - 2026-11-19
 
 ### Changes
