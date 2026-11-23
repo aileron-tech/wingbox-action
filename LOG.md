@@ -1,5 +1,23 @@
 # Log
 
+## 2026-11-24: the default Wingbox release is 0.19.0
+
+What changed
+
+- `python scripts/bump_version.py 0.19.0`: the default of the `version` input in `action.yml`, the version the
+  README names and `WINGBOX_VERSION` in both GitLab templates.
+
+Why
+
+- Wingbox 0.19.0 was released. For this check it changes two things: a part of the config file that holds only
+  C or C++ files is no longer dropped at the build, and a part may state its layers itself (`order:`), so a
+  repository that fits no style can have boundary findings. The `--sexp` facts keep their form.
+
+How it was checked
+
+- The unit tests of this repository with Wingbox 0.19.0 installed. The fixture job of the `test` workflow runs
+  the action with the new default on Linux, macOS and Windows before the tag is made.
+
 ## 2026-11-23: the default Wingbox release is 0.18.0
 
 What changed
