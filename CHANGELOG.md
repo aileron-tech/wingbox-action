@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.6.3 - 2026-11-24
+
+### Changes
+
+- The default Wingbox release is 0.19.0. A part of `.wingbox/config.yaml` that holds only C or C++
+  files is now checked: 0.18.0 dropped such a part at the build, so its layer rules found nothing.
+  A repository can state its layers itself (`order:` of a part with `style: declared`, written by
+  `wingbox init --from-folders`), and the check reports an import of a higher layer.
+
 ## 1.6.2 - 2026-11-23
 
 ### Changes
