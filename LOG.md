@@ -1,5 +1,22 @@
 # Log
 
+## 2026-11-23: the default Wingbox release is 0.17.0
+
+What changed
+
+- `python scripts/bump_version.py 0.17.0`: the default of the `version` input in `action.yml`, the version the
+  README names and `WINGBOX_VERSION` in both GitLab templates.
+
+Why
+
+- Wingbox 0.17.0 was released (0.16.1 before it was not followed here). Its `--sexp` facts keep the form of
+  0.13.0 for edges the code states; a row of an edge that is declared or inferred carries `:basis` in addition.
+
+How it was checked
+
+- The unit tests of this repository. The fixture job of the `test` workflow runs the action with the new
+  default on Linux, macOS and Windows before the tag is set.
+
 ## 2026-11-19: a control mapping and its check against a record (issue #22)
 
 What changed
