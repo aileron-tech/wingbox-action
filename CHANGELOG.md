@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.6.4 - 2026-11-24
+
+### Changes
+
+- The default Wingbox release is 0.19.1. C and C++ impact rows name the symbols
+  a file uses from the changed header.
+
 ## 1.6.3 - 2026-11-24
 
 ### Changes
